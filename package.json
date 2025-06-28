@@ -1,0 +1,16 @@
+{
+  "name": "llm-screening-tool",
+  "version": "1.0.0",
+  "description": "Dual-LLM screening tool for systematic literature reviews",
+  "main": "run.py",
+  "scripts": {
+    "start": "python run.py",
+    "test": "pytest",
+    "build": "python -m pip install -r requirements.txt"
+  },
+  "keywords": ["llm", "screening", "systematic-review", "openai", "anthropic"],
+  "author": "Research Team",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

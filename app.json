@@ -1,0 +1,29 @@
+{
+  "name": "llm-screening-tool",
+  "description": "Dual-LLM screening tool for systematic literature reviews",
+  "repository": "https://github.com/matheus-rech/llm-screening-tool-research",
+  "keywords": ["flask", "llm", "screening", "systematic-review"],
+  "env": {
+    "OPENAI_API_KEY": {
+      "description": "OpenAI API key for GPT models"
+    },
+    "ANTHROPIC_API_KEY": {
+      "description": "Anthropic API key for Claude models"
+    },
+    "ENTREZ_EMAIL": {
+      "description": "Email for PubMed API access"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "standard-1x"
+    }
+  },
+  "addons": ["heroku-postgresql:mini"],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
