@@ -14,3 +14,6 @@ A Flask-based dual-LLM screening tool for systematic literature reviews that aut
 2. Set environment variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
 3. Initialize database: `python init_database.py`
 4. Run application: `python run.py`
+
+---
+*Verification testing completed on 2025-06-28 - Repository access, linting, and PR workflow confirmed.*
