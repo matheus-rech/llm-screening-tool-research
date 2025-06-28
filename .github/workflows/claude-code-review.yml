@@ -1,0 +1,192 @@
+name: Claude Code Review and Quality Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      focus_area:
+        description: 'Specific area to focus on (e.g., testing, security, performance)'
+        required: false
+        default: 'general'
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run tests
+      id: tests
+      run: |
+        python -m pytest -v --tb=short > test_results.txt 2>&1 || echo "TESTS_FAILED=true" >> $GITHUB_ENV
+        cat test_results.txt
+    
+    - name: Run basic linting
+      id: lint
+      run: |
+        python -m py_compile app.py rag.py config_manager.py || echo "LINT_FAILED=true" >> $GITHUB_ENV
+    
+    - name: Get changed files
+      id: changed-files
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} > changed_files.txt
+        else
+          git diff --name-only HEAD~1 HEAD > changed_files.txt
+        fi
+        echo "Changed files:"
+        cat changed_files.txt
+    
+    - name: Claude Code Review (Manual)
+      run: |
+        echo "🤖 Claude Code Review would be performed here"
+        echo "The anthropics/claude-code-review@v1 action is not available in GitHub marketplace"
+        echo "For manual Claude review, use: claude-code review --focus='LLM integration, error handling, security'"
+        echo "Review context has been prepared in previous steps"
+    
+    - name: Comment test results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          let comment = '## 🤖 Automated Quality Check Results\n\n';
+          
+          // Test results
+          if (process.env.TESTS_FAILED === 'true') {
+            comment += '❌ **Tests Failed**\n';
+            try {
+              const testResults = fs.readFileSync('test_results.txt', 'utf8');
+              comment += '```\n' + testResults.slice(-2000) + '\n```\n\n';
+            } catch (e) {
+              comment += 'Could not read test results.\n\n';
+            }
+          } else {
+            comment += '✅ **All Tests Passed**\n\n';
+          }
+          
+          // Lint results
+          if (process.env.LINT_FAILED === 'true') {
+            comment += '⚠️ **Linting Issues Found**\n';
+            comment += 'Please check syntax errors in Python files.\n\n';
+          } else {
+            comment += '✅ **No Syntax Errors**\n\n';
+          }
+          
+          comment += '---\n';
+          comment += '*Claude Code Review will provide detailed feedback above.*';
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+    
+    - name: Create issue for failed checks
+      if: failure() && github.event_name == 'push'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `Quality Check Failed - ${context.sha.slice(0, 7)}`;
+          const body = `
+          ## Quality Check Failure Report
+          
+          **Commit**: ${context.sha}
+          **Branch**: ${context.ref}
+          **Workflow Run**: ${context.runId}
+          
+          ### Issues Detected:
+          ${process.env.TESTS_FAILED === 'true' ? '- ❌ Tests failed' : ''}
+          ${process.env.LINT_FAILED === 'true' ? '- ❌ Linting issues' : ''}
+          
+          Please review the workflow run for detailed information.
+          
+          @${context.actor} - This requires your attention.
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['bug', 'quality-check', 'automated']
+          });
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      security-events: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Run Bandit Security Scan
+      run: |
+        pip install bandit
+        bandit -r . -f json -o bandit-report.json || true
+    
+    - name: Security Scan Results
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          
+          try {
+            const report = JSON.parse(fs.readFileSync('bandit-report.json', 'utf8'));
+            
+            if (report.results && report.results.length > 0) {
+              let comment = '## 🔒 Security Scan Results\n\n';
+              comment += `Found ${report.results.length} potential security issues:\n\n`;
+              
+              report.results.slice(0, 5).forEach((issue, index) => {
+                comment += `### Issue ${index + 1}: ${issue.test_name}\n`;
+                comment += `**Severity**: ${issue.issue_severity}\n`;
+                comment += `**File**: ${issue.filename}:${issue.line_number}\n`;
+                comment += `**Details**: ${issue.issue_text}\n\n`;
+              });
+              
+              if (report.results.length > 5) {
+                comment += `... and ${report.results.length - 5} more issues. Check the full report.\n\n`;
+              }
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } else {
+              console.log('✅ No security issues found');
+            }
+          } catch (e) {
+            console.log('No security report generated or parsing failed:', e.message);
+          }

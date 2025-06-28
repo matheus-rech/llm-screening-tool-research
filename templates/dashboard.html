@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screening Projects Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-8">
+        <header class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-900">Screening Dashboard</h1>
+            <p class="text-lg text-gray-600">Welcome! Manage your systematic review screening projects here.</p>
+        </header>
+
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-semibold">My Projects</h2>
+                <a href="{{ url_for('new_project_form') }}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-semibold shadow-md">
+                    <i class="bi bi-plus-circle-fill mr-2"></i>New Screening Project
+                </a>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full bg-white">
+                    <thead class="bg-gray-200">
+                        <tr>
+                            <th class="py-3 px-4 text-left text-sm font-semibold text-gray-700">Project Name</th>
+                            <th class="py-3 px-4 text-left text-sm font-semibold text-gray-700">Description</th>
+                            <th class="py-3 px-4 text-left text-sm font-semibold text-gray-700">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for project in projects %}
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="py-3 px-4 text-sm">{{ project.name }}</td>
+                            <td class="py-3 px-4 text-sm">{{ project.description }}</td>
+                            <td class="py-3 px-4 text-sm">
+                                <a href="{{ url_for('project_view', project_id=project.id) }}" class="text-blue-600 hover:underline">View</a>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="3" class="py-4 text-center text-gray-500">No projects found. Create one to get started!</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html> 

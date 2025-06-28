@@ -1,0 +1,260 @@
+name: Quality Check with Claude Code Guidance
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  quality-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install bandit safety
+
+    - name: Run Tests
+      id: tests
+      run: |
+        echo "🧪 Running pytest tests..."
+        python -m pytest -v --tb=short --junitxml=test-results.xml
+        echo "TEST_STATUS=passed" >> $GITHUB_ENV
+      continue-on-error: true
+
+    - name: Check Test Results
+      if: failure()
+      run: echo "TEST_STATUS=failed" >> $GITHUB_ENV
+
+    - name: Security Scan with Bandit
+      id: security
+      run: |
+        echo "🔒 Running security scan..."
+        bandit -r . -f json -o bandit-report.json -ll || true
+        if [ -s bandit-report.json ]; then
+          echo "SECURITY_ISSUES=true" >> $GITHUB_ENV
+        else
+          echo "SECURITY_ISSUES=false" >> $GITHUB_ENV
+        fi
+
+    - name: Dependency Security Check
+      id: safety
+      run: |
+        echo "📦 Checking dependency security..."
+        safety check --json --output safety-report.json || true
+        if [ -s safety-report.json ] && [ "$(cat safety-report.json)" != "[]" ]; then
+          echo "DEPENDENCY_ISSUES=true" >> $GITHUB_ENV
+        else
+          echo "DEPENDENCY_ISSUES=false" >> $GITHUB_ENV
+        fi
+
+    - name: Code Quality Analysis
+      id: quality
+      run: |
+        echo "📊 Analyzing code quality..."
+        python -c '
+import ast
+import os
+import sys
+
+issues = []
+for root, dirs, files in os.walk("."):
+    if ".git" in root or "__pycache__" in root:
+        continue
+    for file in files:
+        if file.endswith(".py"):
+            filepath = os.path.join(root, file)
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if "TODO" in content:
+                        issues.append(f"TODO found in {filepath}")
+                    if "FIXME" in content:
+                        issues.append(f"FIXME found in {filepath}")
+                    if "print(" in content and "test" not in filepath.lower():
+                        issues.append(f"Debug print statement in {filepath}")
+                    try:
+                        ast.parse(content)
+                    except SyntaxError as e:
+                        issues.append(f"Syntax error in {filepath}: {e}")
+            except Exception as e:
+                issues.append(f"Error reading {filepath}: {e}")
+
+if issues:
+    print("Quality issues found:")
+    for issue in issues:
+        print(f"  - {issue}")
+    with open("quality-issues.txt", "w") as f:
+        f.write("\\n".join(issues))
+else:
+    print("No major quality issues found")
+'
+        if [ -f quality-issues.txt ]; then
+          echo "QUALITY_ISSUES=true" >> $GITHUB_ENV
+        else
+          echo "QUALITY_ISSUES=false" >> $GITHUB_ENV
+        fi
+
+    - name: Generate Claude Code Review Prompt
+      run: |
+        echo "📝 Generating review context for Claude Code..."
+        cat > claude-review-context.md << 'EOF'
+        # Code Review Context for Claude Code
+
+        ## Project: LLM Screening Tool for Systematic Reviews
+
+        This is a Python Flask application that uses dual LLM models to screen academic papers for systematic reviews.
+
+        ### Recent Quality Check Results:
+        - **Tests**: ${{ env.TEST_STATUS }}
+        - **Security Issues**: ${{ env.SECURITY_ISSUES }}
+        - **Dependency Issues**: ${{ env.DEPENDENCY_ISSUES }}
+        - **Code Quality Issues**: ${{ env.QUALITY_ISSUES }}
+
+        ### Key Areas for Review:
+        1. **Error Handling**: Check retry logic and API failure handling
+        2. **Security**: Validate API key management and input sanitization
+        3. **Performance**: Review concurrent processing and rate limiting
+        4. **Testing**: Assess test coverage and edge cases
+        5. **Configuration**: Validate config management and validation
+
+        ### Architecture Notes:
+        - Uses conservative (gpt-4o-mini) and liberal (gpt-3.5-turbo) models
+        - Processes RIS, BibTeX, CSV, XML files
+        - SQLite database with Flask-Migrate
+        - Concurrent processing with threading
+
+        ### To Review This Code with Claude Code:
+        1. Install Claude Code CLI from claude.ai/code
+        2. Run: `claude-code review --focus="LLM integration, error handling, security"`
+        3. Or use interactive mode for detailed analysis
+
+        EOF
+
+    - name: Create Quality Report Comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          let comment = '## 🤖 Automated Quality Check Results\n\n';
+          comment += `### 🧪 Tests: ${process.env.TEST_STATUS === 'passed' ? '✅ PASSED' : '❌ FAILED'}\n`;
+          if (process.env.TEST_STATUS === 'failed') {
+            comment += 'Please check the Actions tab for detailed test failure information.\n';
+          }
+          comment += '\n';
+          comment += `### 🔒 Security Scan: ${process.env.SECURITY_ISSUES === 'true' ? '⚠️ ISSUES FOUND' : '✅ CLEAN'}\n`;
+          if (process.env.SECURITY_ISSUES === 'true') {
+            try {
+              const banditReport = JSON.parse(fs.readFileSync('bandit-report.json', 'utf8'));
+              if (banditReport.results && banditReport.results.length > 0) {
+                comment += `Found ${banditReport.results.length} potential security issues:\n`;
+                banditReport.results.slice(0, 3).forEach((issue, i) => {
+                  comment += `- **${issue.test_name}** in \`${issue.filename}:${issue.line_number}\` (${issue.issue_severity})\n`;
+                });
+                if (banditReport.results.length > 3) {
+                  comment += `- ... and ${banditReport.results.length - 3} more\n`;
+                }
+              }
+            } catch (e) {
+              comment += 'Check Actions tab for security scan details.\n';
+            }
+          }
+          comment += '\n';
+          comment += `### 📦 Dependencies: ${process.env.DEPENDENCY_ISSUES === 'true' ? '⚠️ VULNERABILITIES' : '✅ SECURE'}\n\n`;
+          comment += `### 📊 Code Quality: ${process.env.QUALITY_ISSUES === 'true' ? '⚠️ ISSUES' : '✅ GOOD'}\n`;
+          if (process.env.QUALITY_ISSUES === 'true') {
+            try {
+              const qualityIssues = fs.readFileSync('quality-issues.txt', 'utf8');
+              comment += '```\n' + qualityIssues + '\n```\n';
+            } catch (e) {
+              comment += 'Check Actions tab for quality issues.\n';
+            }
+          }
+          comment += '\n';
+          comment += '---\n\n';
+          comment += '### 🎯 For Comprehensive Review with Claude Code:\n\n';
+          comment += '1. **Install Claude Code**: Visit [claude.ai/code](https://claude.ai/code)\n';
+          comment += '2. **Review Command**: `claude-code review --focus="error handling, security, performance"`\n';
+          comment += '3. **Interactive Analysis**: `claude-code` for detailed code exploration\n\n';
+          comment += '**Focus Areas for Claude Review**:\n';
+          comment += '- LLM API integration and error handling\n';
+          comment += '- Concurrent processing optimization\n';
+          comment += '- Security practices (API keys, file uploads)\n';
+          comment += '- Database operations and migrations\n';
+          comment += '- Test coverage and edge cases\n\n';
+          comment += '*This automated check provides basic quality metrics. Use Claude Code for in-depth analysis and architectural review.*';
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          test-results.xml
+          bandit-report.json
+          safety-report.json
+          quality-issues.txt
+          claude-review-context.md
+
+    - name: Create Issue for Main Branch Failures
+      if: failure() && github.ref == 'refs/heads/main'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `Quality Check Failed - ${context.sha.slice(0, 7)}`;
+          const body = `
+          ## 🚨 Quality Check Failure on Main Branch
+
+          **Commit**: ${context.sha}
+          **Workflow**: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+
+          ### Issues Detected:
+          ${process.env.TEST_STATUS === 'failed' ? '- ❌ Tests failed' : ''}
+          ${process.env.SECURITY_ISSUES === 'true' ? '- 🔒 Security issues found' : ''}
+          ${process.env.DEPENDENCY_ISSUES === 'true' ? '- 📦 Dependency vulnerabilities' : ''}
+          ${process.env.QUALITY_ISSUES === 'true' ? '- 📊 Code quality issues' : ''}
+
+          ### Recommended Actions:
+          1. **Review failures** in the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+          2. **Use Claude Code** for detailed analysis: \`claude-code review\`
+          3. **Fix issues** and verify with local testing
+          4. **Create PR** with fixes
+
+          ### Claude Code Review Prompt:
+          \`\`\`bash
+          claude-code review --focus="Fix failing tests, security issues, and code quality problems in LLM screening tool"
+          \`\`\`
+          @${context.actor} - Please address these issues promptly.
+          `;
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['bug', 'quality-check', 'automated', 'high-priority']
+          });

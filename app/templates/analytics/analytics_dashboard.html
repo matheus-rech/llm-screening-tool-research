@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics Dashboard - {{ project.name }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            color: #E0E0E0;
+            background-color: #1a202c;
+        }
+        .header {
+            background-color: #2c3e50;
+        }
+        .card {
+            background-color: #2d3748;
+            border: 1px solid #4a5568;
+            border-radius: 0.5rem;
+        }
+        .card-header {
+            background-color: #4a5568;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #2d3748;
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+            border: 1px solid #4a5568;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25em 0.6em;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: 9999px;
+        }
+        .status-green { background-color: #38a169; color: white; }
+        .status-red { background-color: #e53e3e; color: white; }
+        .status-yellow { background-color: #d69e2e; color: white; }
+        .status-blue { background-color: #3182ce; color: white; }
+        [x-cloak] { display: none; }
+    </style>
+</head>
+<body x-data="analyticsApp()" x-init="init()">
+    
+    <!-- Header -->
+    <header class="header text-white p-4 shadow-md">
+        <div class="container mx-auto">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-2xl font-bold">Analytics Dashboard</h1>
+                    <p class="text-sm opacity-80">{{ project.name }} - Comprehensive Screening Analytics</p>
+                </div>
+                <div class="flex space-x-4">
+                    <button @click="refreshAnalytics()" 
+                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white font-medium">
+                        Refresh Data
+                    </button>
+                    <button @click="exportReport()" 
+                            class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white font-medium">
+                        Export Report
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container mx-auto p-6">
+        
+        <!-- Key Metrics Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <!-- Total Processed -->
+            <div class="metric-card">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-300">Total Processed</h3>
+                    <div class="w-3 h-3 bg-blue-500 rounded-full"></div>
+                </div>
+                <div class="text-3xl font-bold text-white mb-2" x-text="analytics.performance_metrics?.total_articles_processed || 0"></div>
+                <div class="text-sm text-gray-400">Articles screened</div>
+            </div>
+
+            <!-- Inclusion Rate -->
+            <div class="metric-card">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-300">Inclusion Rate</h3>
+                    <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                </div>
+                <div class="text-3xl font-bold text-white mb-2" x-text="analytics.decision_distribution?.inclusion_rate?.toFixed(1) + '%' || '0%'"></div>
+                <div class="text-sm text-gray-400">Studies included</div>
+            </div>
+
+            <!-- Agreement Score -->
+            <div class="metric-card">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-300">AI Agreement</h3>
+                    <div class="w-3 h-3" :class="analytics.agreement_metrics?.decision_agreement_rate > 80 ? 'bg-green-500' : analytics.agreement_metrics?.decision_agreement_rate > 60 ? 'bg-yellow-500' : 'bg-red-500'" class="rounded-full"></div>
+                </div>
+                <div class="text-3xl font-bold text-white mb-2" x-text="analytics.agreement_metrics?.decision_agreement_rate?.toFixed(1) + '%' || '0%'"></div>
+                <div class="text-sm text-gray-400">Provider consensus</div>
+            </div>
+
+            <!-- Total Cost -->
+            <div class="metric-card">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-300">Total Cost</h3>
+                    <div class="w-3 h-3 bg-purple-500 rounded-full"></div>
+                </div>
+                <div class="text-3xl font-bold text-white mb-2" x-text="'$' + (analytics.cost_analysis?.total_cost?.toFixed(2) || '0.00')"></div>
+                <div class="text-sm text-gray-400">Screening costs</div>
+            </div>
+        </div>
+
+        <!-- Charts and Detailed Analytics -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            
+            <!-- Decision Distribution Chart -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="text-lg font-semibold">Decision Distribution</h3>
+                </div>
+                <div class="p-6">
+                    <canvas id="decisionChart" width="400" height="300"></canvas>
+                </div>
+            </div>
+
+            <!-- Provider Comparison Chart -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="text-lg font-semibold">Provider Performance</h3>
+                </div>
+                <div class="p-6">
+                    <canvas id="providerChart" width="400" height="300"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Metrics Sections -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            
+            <!-- Agreement Analysis -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="text-lg font-semibold">Agreement Analysis</h3>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Decision Agreement</span>
+                        <span class="font-bold" x-text="analytics.agreement_metrics?.decision_agreement_rate?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Confidence Correlation</span>
+                        <span class="font-bold" x-text="analytics.agreement_metrics?.confidence_correlation?.toFixed(2) || '0.00'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Conflict Rate</span>
+                        <span class="font-bold text-yellow-400" x-text="analytics.agreement_metrics?.conflict_rate?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Low Confidence Rate</span>
+                        <span class="font-bold text-red-400" x-text="analytics.agreement_metrics?.low_confidence_rate?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quality Metrics -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="text-lg font-semibold">Quality Metrics</h3>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">PICO Completeness</span>
+                        <span class="font-bold" x-text="analytics.pico_extraction_analysis?.overall_pico_completeness?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Extraction Quality</span>
+                        <span class="font-bold" x-text="(analytics.quality_metrics?.extraction_completeness_avg * 100)?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Reasoning Quality</span>
+                        <span class="font-bold" x-text="(analytics.quality_metrics?.reasoning_quality_avg * 100)?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Consistency Score</span>
+                        <span class="font-bold text-green-400" x-text="(analytics.quality_metrics?.consistency_score * 100)?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Metrics -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="text-lg font-semibold">Performance</h3>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Articles/Hour</span>
+                        <span class="font-bold" x-text="analytics.performance_metrics?.processing_speed_per_hour?.toFixed(1) || '0'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Avg Response Time</span>
+                        <span class="font-bold" x-text="analytics.performance_metrics?.average_response_time?.toFixed(1) + 's' || '0s'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">API Error Rate</span>
+                        <span class="font-bold text-red-400" x-text="analytics.performance_metrics?.api_error_rate?.toFixed(1) + '%' || '0%'"></span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Cost per Article</span>
+                        <span class="font-bold" x-text="'$' + (analytics.performance_metrics?.cost_per_article?.toFixed(3) || '0.000')"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Provider Detailed Comparison -->
+        <div class="card mb-8">
+            <div class="card-header">
+                <h3 class="text-lg font-semibold">Provider Detailed Comparison</h3>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    
+                    <!-- OpenAI Stats -->
+                    <div class="bg-gray-800 rounded-lg p-4">
+                        <h4 class="text-lg font-semibold text-blue-400 mb-4">OpenAI (o3/GPT-4o)</h4>
+                        <div class="space-y-3">
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Total Evaluations</span>
+                                <span class="font-bold" x-text="analytics.provider_comparison?.openai_stats?.total_evaluations || 0"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Inclusion Rate</span>
+                                <span class="font-bold" x-text="analytics.provider_comparison?.openai_stats?.inclusion_rate?.toFixed(1) + '%' || '0%'"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Avg Confidence</span>
+                                <span class="font-bold" x-text="(analytics.provider_comparison?.openai_stats?.average_confidence * 100)?.toFixed(1) + '%' || '0%'"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Response Time</span>
+                                <span class="font-bold" x-text="analytics.provider_comparison?.openai_stats?.average_response_time?.toFixed(1) + 's' || '0s'"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Anthropic Stats -->
+                    <div class="bg-gray-800 rounded-lg p-4">
+                        <h4 class="text-lg font-semibold text-orange-400 mb-4">Anthropic (Claude)</h4>
+                        <div class="space-y-3">
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Total Evaluations</span>
+                                <span class="font-bold" x-text="analytics.provider_comparison?.anthropic_stats?.total_evaluations || 0"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Inclusion Rate</span>
+                                <span class="font-bold" x-text="analytics.provider_comparison?.anthropic_stats?.inclusion_rate?.toFixed(1) + '%' || '0%'"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Avg Confidence</span>
+                                <span class="font-bold" x-text="(analytics.provider_comparison?.anthropic_stats?.average_confidence * 100)?.toFixed(1) + '%' || '0%'"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Response Time</span>
+                                <span class="font-bold" x-text="analytics.provider_comparison?.anthropic_stats?.average_response_time?.toFixed(1) + 's' || '0s'"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recommendations -->
+        <div class="card" x-show="analytics.recommendations && analytics.recommendations.length > 0">
+            <div class="card-header">
+                <h3 class="text-lg font-semibold">Recommendations</h3>
+            </div>
+            <div class="p-6">
+                <div class="space-y-4">
+                    <template x-for="recommendation in analytics.recommendations" :key="recommendation.title">
+                        <div class="border border-gray-600 rounded-lg p-4" :class="recommendation.priority === 'high' ? 'border-red-500 bg-red-900 bg-opacity-20' : recommendation.priority === 'medium' ? 'border-yellow-500 bg-yellow-900 bg-opacity-20' : 'border-blue-500 bg-blue-900 bg-opacity-20'">
+                            <div class="flex items-start justify-between">
+                                <div>
+                                    <h4 class="font-semibold text-white mb-2" x-text="recommendation.title"></h4>
+                                    <p class="text-gray-300 text-sm mb-2" x-text="recommendation.description"></p>
+                                    <p class="text-xs text-gray-400" x-text="'Action: ' + recommendation.action"></p>
+                                </div>
+                                <span class="status-badge text-xs" :class="recommendation.priority === 'high' ? 'status-red' : recommendation.priority === 'medium' ? 'status-yellow' : 'status-blue'" x-text="recommendation.priority.toUpperCase()"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function analyticsApp() {
+            return {
+                analytics: {},
+                loading: false,
+                
+                async init() {
+                    await this.loadAnalytics();
+                    this.setupCharts();
+                },
+                
+                async loadAnalytics() {
+                    this.loading = true;
+                    try {
+                        const response = await fetch('/api/analytics/project/{{ project.id }}/dashboard');
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            this.analytics = data.analytics;
+                            this.updateCharts();
+                        }
+                    } catch (error) {
+                        console.error('Failed to load analytics:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async refreshAnalytics() {
+                    await this.loadAnalytics();
+                },
+                
+                async exportReport() {
+                    try {
+                        const response = await fetch('/api/analytics/project/{{ project.id }}/export', {
+                            method: 'POST'
+                        });
+                        
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `analytics_report_{{ project.id }}_${new Date().toISOString().split('T')[0]}.json`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            window.URL.revokeObjectURL(url);
+                        }
+                    } catch (error) {
+                        console.error('Export failed:', error);
+                    }
+                },
+                
+                setupCharts() {
+                    // Decision Distribution Chart
+                    const decisionCtx = document.getElementById('decisionChart').getContext('2d');
+                    this.decisionChart = new Chart(decisionCtx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Included', 'Excluded', 'Uncertain', 'Conflicts'],
+                            datasets: [{
+                                data: [0, 0, 0, 0],
+                                backgroundColor: ['#38a169', '#e53e3e', '#d69e2e', '#9f7aea']
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    labels: { color: '#E0E0E0' }
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Provider Comparison Chart
+                    const providerCtx = document.getElementById('providerChart').getContext('2d');
+                    this.providerChart = new Chart(providerCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: ['Inclusion Rate', 'Avg Confidence', 'Response Time'],
+                            datasets: [{
+                                label: 'OpenAI',
+                                data: [0, 0, 0],
+                                backgroundColor: '#3182ce'
+                            }, {
+                                label: 'Anthropic',
+                                data: [0, 0, 0],
+                                backgroundColor: '#d69e2e'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            scales: {
+                                y: { 
+                                    ticks: { color: '#E0E0E0' },
+                                    grid: { color: '#4a5568' }
+                                },
+                                x: { 
+                                    ticks: { color: '#E0E0E0' },
+                                    grid: { color: '#4a5568' }
+                                }
+                            },
+                            plugins: {
+                                legend: {
+                                    labels: { color: '#E0E0E0' }
+                                }
+                            }
+                        }
+                    });
+                },
+                
+                updateCharts() {
+                    if (this.analytics.decision_distribution) {
+                        const dist = this.analytics.decision_distribution;
+                        this.decisionChart.data.datasets[0].data = [
+                            dist.include_count || 0,
+                            dist.exclude_count || 0,
+                            dist.uncertain_count || 0,
+                            dist.conflict_count || 0
+                        ];
+                        this.decisionChart.update();
+                    }
+                    
+                    if (this.analytics.provider_comparison) {
+                        const openai = this.analytics.provider_comparison.openai_stats;
+                        const anthropic = this.analytics.provider_comparison.anthropic_stats;
+                        
+                        this.providerChart.data.datasets[0].data = [
+                            openai?.inclusion_rate || 0,
+                            (openai?.average_confidence || 0) * 100,
+                            openai?.average_response_time || 0
+                        ];
+                        
+                        this.providerChart.data.datasets[1].data = [
+                            anthropic?.inclusion_rate || 0,
+                            (anthropic?.average_confidence || 0) * 100,
+                            anthropic?.average_response_time || 0
+                        ];
+                        
+                        this.providerChart.update();
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

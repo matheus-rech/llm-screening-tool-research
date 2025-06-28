@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en"><head><script>(function(firebaseConfig, initialAuthToken, appId) {
+        window.__firebase_config = firebaseConfig;
+        window.__initial_auth_token = initialAuthToken;
+        window.__app_id = appId;
+            })(
+                // Firebase config should be loaded from environment variables
+                window.FIREBASE_CONFIG || {},
+                // Auth token should be obtained securely at runtime
+                window.INITIAL_AUTH_TOKEN || null,
+                // App ID should be configured via environment
+                window.APP_ID || "llm_screening_tool"
+            )</script><script>(function() {
+  // Ensure this script is executed only once
+  if (window.firebaseAuthBridgeScriptLoaded) {
+    return;
+  }
+  window.firebaseAuthBridgeScriptLoaded = true;
+
+  let nextTokenPromiseId = 0;
+
+  // Stores { resolve, reject } for ongoing token requests
+  const pendingTokenPromises = {};
+
+  // Listen for messages from the Host Application
+  window.addEventListener('message', function(event) {
+
+    const messageData = event.data;
+
+  if (messageData && messageData.type === 'RESOLVE_NEW_FIREBASE_TOKEN') {
+      const { success, token, error, promiseId } = messageData ?? {};
+      if (pendingTokenPromises[promiseId]) {
+        if (success) {
+          pendingTokenPromises[promiseId].resolve(token);
+        } else {
+          pendingTokenPromises[promiseId].reject(new Error(error || 'Token refresh failed from host.'));
+        }
+        delete pendingTokenPromises[promiseId];
+      }
+    }
+  });
+
+  // Expose a function for the Generated App to request a new Firebase token
+  window.requestNewFirebaseToken = function() {
+    const currentPromiseId = nextTokenPromiseId++;
+    const promise = new Promise((resolve, reject) => {
+      pendingTokenPromises[currentPromiseId] = { resolve, reject };
+    });
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'REQUEST_NEW_FIREBASE_TOKEN',
+        promiseId: currentPromiseId
+      }, '*');
+    } else {
+      pendingTokenPromises[currentPromiseId].reject(new Error('No parent window to request token from.'));
+      delete pendingTokenPromises[currentPromiseId];
+    }
+    return promise;
+  };
+})();</script><script>let realOriginalGetUserMedia = null;
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  realOriginalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+}
+
+(function() {
+  if (navigator.mediaDevices && navigator.mediaDevices.__proto__) {
+    try {
+      Object.defineProperty(navigator.mediaDevices.__proto__, 'getUserMedia', {
+        get: function() {
+          return undefined; // Or throw an error
+        },
+        configurable: false
+      });
+    } catch (error) {
+      console.error("Error defining prototype getter:", error);
+    }
+  }
+})();
+
+(function() {
+  let originalGetUserMedia = realOriginalGetUserMedia;
+
+  const pendingMediaResolvers = {};
+  let nextMediaPromiseId = 0;
+
+  function interceptGetUserMedia() {
+    if (navigator.mediaDevices) {
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+        value: function(constraints) {
+          const mediaPromiseId = nextMediaPromiseId++;
+          const promise = new Promise((resolve, reject) => {
+            pendingMediaResolvers[mediaPromiseId] = (granted) => {
+              delete pendingMediaResolvers[mediaPromiseId];
+              if (granted) {
+                if (originalGetUserMedia) {
+                  originalGetUserMedia(constraints).then(resolve).catch(reject);
+                } else {
+                  reject(new Error("Original getUserMedia not available."));
+                }
+              } else {
+              reject(new DOMException('Permission denied', 'NotAllowedError'));
+            }
+          };
+        });
+
+        window.parent.postMessage({
+          type: 'requestMediaPermission',
+          constraints: constraints,
+          promiseId: mediaPromiseId,
+        }, '*');
+
+        return promise;
+      },
+      writable: false,
+      configurable: false
+    });
+    }
+  }
+
+  interceptGetUserMedia();
+
+  const observer = new MutationObserver(function(mutationsList, observer) {
+    for (const mutation of mutationsList) {
+      if (mutation.type === 'reconfigured' && mutation.name === 'getUserMedia' && mutation.object === navigator.mediaDevices) {
+        interceptGetUserMedia();
+      } else if (mutation.type === 'attributes' && mutation.attributeName === 'getUserMedia' && mutation.target === navigator.mediaDevices) {
+        interceptGetUserMedia();
+      } else if (mutation.type === 'childList' && mutation.addedNodes) {
+        mutation.addedNodes.forEach(node => {
+          if (node === navigator.mediaDevices) {
+            interceptGetUserMedia();
+          }
+        });
+      }
+    }
+  });
+
+  window.addEventListener('message', function(event) {
+    if (event.data) {
+      if (event.data.type === 'resolveMediaPermission') {
+        const { promiseId, granted } = event.data;
+        if (pendingMediaResolvers[promiseId]) {
+          pendingMediaResolvers[promiseId](granted);
+        }
+      }
+    }
+  });
+
+})();</script><script>((function(modelInformation) {
+  const originalFetch = window.fetch;
+  // TODO: b/421908508 - Move these out of the script and match all generative AI model calls.
+  let googleLlmBaseApiUrls = [
+    'https://generativelanguage.googleapis.com/v1beta/models/' + modelInformation.textModelName + ':streamGenerateContent',
+    'https://generativelanguage.googleapis.com/v1beta/models/' + modelInformation.textModelName + ':generateContent',
+    'https://generativelanguage.googleapis.com/v1beta/models/' + modelInformation.imageModelName + ':predict',
+    'https://generativelanguage.googleapis.com/v1beta/models/' + modelInformation.imageModelName + ':predictLongRunning',
+    'https://generativelanguage.googleapis.com/v1beta/models/' + modelInformation.videoModelName + ':predict',
+    'https://generativelanguage.googleapis.com/v1beta/models/' + modelInformation.videoModelName + ':predictLongRunning',
+  ];
+  modelInformation.deprecatedTextModelNames.forEach((modelName) => {
+    googleLlmBaseApiUrls.push(
+      'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':streamGenerateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent',
+    );
+  });
+
+  const pendingFetchResolvers = {};
+  let nextPromiseId = 0;
+
+  function handleStringInput(input, optionsArgument) {
+    const actualUrl = input;
+    const fetchCallArgs = [actualUrl, optionsArgument];
+    const effectiveOptions = optionsArgument || {};
+    const bodyForApiKeyCheck = effectiveOptions.body;
+    const bodyForPostMessage = effectiveOptions.body;
+    return { actualUrl, fetchCallArgs, effectiveOptions, bodyForApiKeyCheck, bodyForPostMessage };
+  }
+
+  function handleRequestInput(input, optionsArgument) {
+    const actualUrl = input.url;
+    const fetchCallArgs = [input, optionsArgument];
+    const effectiveOptions = { method: input.method, headers: new Headers(input.headers) };
+    let bodyForApiKeyCheck;
+    let bodyForPostMessage;
+
+    if (optionsArgument) {
+      if (optionsArgument.method) effectiveOptions.method = optionsArgument.method;
+      if (optionsArgument.headers) effectiveOptions.headers = new Headers(optionsArgument.headers);
+      if ('body' in optionsArgument) {
+        bodyForApiKeyCheck = optionsArgument.body;
+        bodyForPostMessage = optionsArgument.body;
+      } else {
+        bodyForApiKeyCheck = undefined;
+        bodyForPostMessage = input.body;
+      }
+    } else {
+      bodyForApiKeyCheck = undefined;
+      bodyForPostMessage = input.body;
+    }
+    return { actualUrl, fetchCallArgs, effectiveOptions, bodyForApiKeyCheck, bodyForPostMessage };
+  }
+
+  window.fetch = function(input, optionsArgument) {
+    let actualUrl;
+    let fetchCallArgs;
+    let effectiveOptions = {};
+    let bodyForApiKeyCheck;
+    let bodyForPostMessage;
+
+    if (typeof input === 'string') {
+      ({actualUrl, fetchCallArgs, effectiveOptions, bodyForApiKeyCheck, bodyForPostMessage} = handleStringInput(input, optionsArgument));
+    } else if (input instanceof Request) {
+      ({actualUrl, fetchCallArgs, effectiveOptions, bodyForApiKeyCheck, bodyForPostMessage} = handleRequestInput(input, optionsArgument));
+    } else {
+      return originalFetch.apply(window, [input, optionsArgument]);
+    }
+
+    effectiveOptions.method = effectiveOptions.method || 'GET';
+    if (!effectiveOptions.headers) {
+      effectiveOptions.headers = new Headers();
+    }
+
+
+    if (typeof actualUrl === 'string' && googleLlmBaseApiUrls.some((url) => actualUrl.startsWith(url))) {
+      let apiKeyIsNull = true;
+
+      const regex = new RegExp("models/([^:]+)");
+      const modelNameMatch = actualUrl.match(regex);
+      const modelName = modelNameMatch ? modelNameMatch[1] : 'unspecified';
+
+
+      try {
+        const urlObject = new URL(actualUrl);  // Use URL object for robust parsing
+        const apiKeyParam = urlObject.searchParams.get('key');
+        if (apiKeyParam) {
+          apiKeyIsNull = false;
+        }
+      } catch (e) {
+        // Continue checks even if URL parsing fails
+      }
+
+      if (apiKeyIsNull && effectiveOptions.headers) {
+        const h = new Headers(effectiveOptions.headers);
+        const apiKeyHeaderValue = h.get('X-API-Key') || h.get('x-api-key');
+        if (apiKeyHeaderValue) {
+          apiKeyIsNull = false;
+          return originalFetch.apply(window, fetchCallArgs);
+        }
+      }
+
+      if (apiKeyIsNull && effectiveOptions.method && ['POST', 'PUT', 'PATCH'].includes(effectiveOptions.method.toUpperCase()) && typeof bodyForApiKeyCheck === 'string') {
+        try {
+          const bodyData = JSON.parse(bodyForApiKeyCheck);
+          if (bodyData && bodyData.apiKey) {
+            apiKeyIsNull = false;
+            return originalFetch.apply(window, fetchCallArgs);
+          }
+        } catch (e) {
+          // Ignore JSON parsing errors
+        }
+      }
+
+      if(apiKeyIsNull) {
+        const promiseId = nextPromiseId++;
+        const promise = new Promise((resolve) => {
+          pendingFetchResolvers[promiseId] = (resolvedResponse) => {
+            delete pendingFetchResolvers[promiseId];
+            resolve(resolvedResponse);
+          };
+        });
+
+        let serializedBodyForPostMessage;
+        if (typeof bodyForPostMessage === 'string' || bodyForPostMessage == null) {
+            serializedBodyForPostMessage = bodyForPostMessage;
+        } else if (bodyForPostMessage instanceof ReadableStream) {
+            serializedBodyForPostMessage = null;
+        } else {
+            try {
+                serializedBodyForPostMessage = JSON.stringify(bodyForPostMessage);
+            } catch (e) {
+                serializedBodyForPostMessage = null;
+            }
+        }
+
+        const messageOptions = {
+            method: effectiveOptions.method,
+            headers: Object.fromEntries(new Headers(effectiveOptions.headers).entries()),
+            body: serializedBodyForPostMessage
+        };
+
+        window.parent.postMessage({
+          type: 'requestFetch',
+          url: actualUrl,
+          modelName: modelName,
+          options: messageOptions,
+          promiseId: promiseId,
+        }, '*');
+
+        return promise;
+      }
+      return originalFetch.apply(window, fetchCallArgs);
+    }
+    return originalFetch.apply(window, fetchCallArgs);
+  };
+
+  window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'resolveFetch') {
+      const { promiseId, response } = event.data;
+      if (pendingFetchResolvers[promiseId]) {
+        try {
+          const reconstructedResponse = new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: new Headers(response.headers),
+          });
+          pendingFetchResolvers[promiseId](reconstructedResponse);
+        } catch (error) {
+          pendingFetchResolvers[promiseId](new Response(null, { status: 500, statusText: "Interceptor Response Reconstruction Error" }));
+        }
+      }
+    }
+  });
+
+}))({"textModelName":"gemini-2.5-flash-preview-04-17","imageModelName":"imagen-3.0-generate-002","videoModelName":"veo-2.0-generate-001","deprecatedTextModelNames":["gemini-2.0-flash"]})</script><script>(function() {
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+
+    /**
+   * Normalizes an error event or a promise rejection reason into a structured error object.
+   * @param {*} errorEventOrReason The error object or reason.
+   * @return {object} Structured error data { message, name, stack }.
+   */
+  function getErrorObject(errorEventOrReason) {
+    if (errorEventOrReason instanceof Error) {
+      return {
+        message: errorEventOrReason.message,
+        name: errorEventOrReason.name,
+        stack: errorEventOrReason.stack,
+      };
+    }
+    // Fallback for non-Error objects.
+    try {
+      return {
+        message: JSON.stringify(errorEventOrReason),
+        name: 'UnknownErrorType',
+        stack: null,
+      };
+    } catch (e) {
+      return {
+        message: String(errorEventOrReason),
+        name: 'UnknownErrorTypeNonStringifiable',
+        stack: null,
+      };
+    }
+  }
+
+  /**
+   * Converts an array of arguments (from log/error) into a single string.
+   * Handles Error objects specially to include their message and stack.
+   * @param {Array<*>} args - Arguments passed to console methods.
+   * @return {string} A string representation of the arguments.
+   */
+  function stringifyArgs(args) {
+    return args
+      .map((arg) => {
+        if (arg instanceof Error) {
+          const {message, stack} = arg;
+          return `Error: ${message}${stack ? ('\nStack: ' + stack) : ''}`;
+        }
+        if (typeof arg === 'object' && arg !== null) {
+          try {
+            return JSON.stringify(arg);
+          } catch (error) {
+            return '[Circular Object]';
+          }
+        } else {
+          return String(arg);
+        }
+      })
+      .join(' ');
+  }
+
+  console.log = function(...args) {
+    const logString = stringifyArgs(args);
+    window.parent.postMessage({ type: 'log', message: logString }, '*');
+    originalConsoleLog.apply(console, args);
+  };
+
+  console.error = function(...args) {
+    let errorData;
+    if (args.length > 0 && args[0] instanceof Error) {
+      const err = args[0];
+      // If the first arg is an Error, capture its details.
+      errorData = {
+        type: 'error',
+        source: 'CONSOLE_ERROR',
+        ...getErrorObject(err),
+        rawArgsString: stringifyArgs(args.slice(1)),
+        timestamp: new Date().toISOString(),
+      };
+    } else {
+      // If not an Error object, treat all args as a general error message.
+      errorData = {
+        type: 'error',
+        source: 'CONSOLE_ERROR',
+        message: stringifyArgs(args),
+        name: 'ConsoleLoggedError',
+        stack: null,
+        timestamp: new Date().toISOString(),
+      };
+    }
+    window.parent.postMessage(errorData, '*');
+    originalConsoleError.apply(console, args);
+  };
+
+  // Listen for global unhandled synchronous errors.
+  window.addEventListener('error', function(event) {
+    const errorDetails = event.error ? getErrorObject(event.error) : {
+      message: event.message,
+      name: 'GlobalError',
+      stack: null,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    };
+
+    window.parent.postMessage({
+      type: 'error',
+      source: 'global',
+      ...errorDetails,
+      message: errorDetails.message || event.message,
+      timestamp: new Date().toISOString(),
+    }, '*');
+  });
+
+  // Listen for unhandled promise rejections (asynchronous errors).
+  window.addEventListener('unhandledrejection', function(event) {
+    const errorDetails = getErrorObject(event.reason);
+
+    window.parent.postMessage({
+      type: 'error',
+      source: 'unhandledrejection',
+      ...errorDetails,
+      message: errorDetails.message || 'Unhandled Promise Rejection',
+      timestamp: new Date().toISOString(),
+    }, '*');
+  });
+
+})();</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Production LLM Screening Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&amp;family=Roboto+Mono&amp;display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            color: #E0E0E0;
+            background-color: #1a202c;
+        }
+        .header {
+            background-color: #2c3e50;
+        }
+        .red-border-textarea {
+            border: 1px solid #e53e3e;
+        }
+        .sidebar {
+            width: 280px;
+            min-width: 280px;
+        }
+        .main-content {
+            flex-grow: 1;
+        }
+        .monospace {
+            font-family: 'Roboto Mono', monospace;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25em 0.6em;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: 9999px;
+        }
+        .status-green {
+            background-color: #38a169;
+            color: white;
+        }
+        .status-red {
+            background-color: #e53e3e;
+            color: white;
+        }
+        .status-yellow {
+            background-color: #d69e2e;
+            color: white;
+        }
+        .card {
+            background-color: #2d3748;
+            border: 1px solid #4a5568;
+            border-radius: 0.5rem;
+        }
+        .card-header {
+            background-color: #4a5568;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #2d3748;
+            cursor: pointer;
+        }
+        .pico-score {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .pico-label {
+            width: 100px;
+            font-weight: 600;
+        }
+        .pico-bar-container {
+            flex-grow: 1;
+            background-color: #4a5568;
+            border-radius: 0.25rem;
+            overflow: hidden;
+            height: 20px;
+        }
+        .pico-bar {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: white;
+            font-weight: bold;
+        }
+        .scroll-container::-webkit-scrollbar {
+            height: 8px;
+        }
+        .scroll-container::-webkit-scrollbar-track {
+            background: #2d3748;
+        }
+        .scroll-container::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+        .scroll-container::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+        [x-cloak] { display: none; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer="" crossorigin="anonymous"></script>
+</head>
+<body x-data="llmScreeningTool()">
+    <!-- Header -->
+    <header class="header text-white p-4 shadow-md">
+        <div class="container mx-auto">
+            <h1 class="text-2xl font-bold">Production LLM Screening Tool</h1>
+            <p class="text-sm opacity-80">Dual AI Screening with Real-time Logging and Audit Trail Generation</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container mx-auto p-4">
+        <!-- Configuration Section -->
+        <div class="card mb-4" x-data="{ expanded: true }">
+            <div class="card-header flex justify-between items-center" @click="expanded = !expanded">
+                <h2 class="text-xl font-semibold">Configuration</h2>
+                <button x-text="expanded ? 'Collapse' : 'Expand'" class="text-sm text-blue-300 hover:underline"></button>
+            </div>
+            <div x-show="expanded" x-cloak="" class="p-4" x-transition="">
+                <!-- Research Question -->
+                <div class="mb-4">
+                    <label for="research-question" class="block font-semibold mb-2">Research Question</label>
+                    <textarea id="research-question" rows="2" class="w-full p-2 bg-gray-700 border border-red-600 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="Enter the primary research question here..."></textarea>
+                </div>
+
+                <!-- PICO-TT Framework -->
+                <div class="mb-4">
+                    <h3 class="font-semibold mb-2">PICO-TT Framework</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <textarea class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Population: e.g., Adults with Type 2 Diabetes"></textarea>
+                        <textarea class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Intervention: e.g., Metformin treatment"></textarea>
+                        <textarea class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Comparison: e.g., Placebo or other active drug"></textarea>
+                        <textarea class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Outcomes: e.g., HbA1c levels, cardiovascular events"></textarea>
+                        <textarea class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Time Frame: e.g., Minimum 6 months follow-up"></textarea>
+                        <textarea class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Study Types: e.g., Randomized Controlled Trials"></textarea>
+                    </div>
+                </div>
+
+                <!-- Inclusion/Exclusion Criteria -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <h3 class="font-semibold mb-2 text-green-400">Inclusion Criteria</h3>
+                        <div class="space-y-2">
+                            <input type="text" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Criterion 1...">
+                            <input type="text" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Criterion 2...">
+                            <button class="text-sm text-blue-300 hover:underline">+ Add Criterion</button>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold mb-2 text-red-400">Exclusion Criteria</h3>
+                        <div class="space-y-2">
+                            <input type="text" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Criterion 1...">
+                            <input type="text" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="Criterion 2...">
+                            <button class="text-sm text-blue-300 hover:underline">+ Add Criterion</button>
+                        </div>
+                    </div>
+                </div>
+                 <!-- Action Buttons -->
+                <div class="flex justify-end space-x-2">
+                    <button class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-md text-white font-semibold shadow-md">Test Criteria</button>
+                    <button class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-md text-white font-semibold shadow-md">Load Template</button>
+                    <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-semibold shadow-md">Save Template</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- LLM Setup -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <!-- AI Model 1 -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="text-lg font-semibold">AI Model 1 (Conservative)</h2>
+                </div>
+                <div class="p-4 space-y-3">
+                    <select class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md">
+                        <option>Claude (Anthropic)</option>
+                        <option>OpenAI (GPT-4)</option>
+                        <option>Ollama (Local)</option>
+                        <option>LM Studio (Local)</option>
+                    </select>
+                    <input type="password" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="API Key">
+                    <input type="text" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="API Endpoint (if local)">
+                    <div class="flex items-center justify-between">
+                        <span :class="`status-badge status-${model1.status.color}`" x-text="model1.status.text"></span>
+                        <button @click="testConnection('model1')" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-semibold shadow">Test Connection</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Model 2 -->
+            <div class="card">
+                <div class="card-header">
+                     <h2 class="text-lg font-semibold">AI Model 2 (Pragmatic)</h2>
+                </div>
+                <div class="p-4 space-y-3">
+                    <select class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md">
+                        <option>OpenAI (GPT-3.5 Turbo)</option>
+                        <option>Claude (Anthropic)</option>
+                        <option>Ollama (Local)</option>
+                        <option>LM Studio (Local)</option>
+                    </select>
+                    <input type="password" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="API Key">
+                    <input type="text" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md" placeholder="API Endpoint (if local)">
+                     <div class="flex items-center justify-between">
+                        <span :class="`status-badge status-${model2.status.color}`" x-text="model2.status.text"></span>
+                        <button @click="testConnection('model2')" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-semibold shadow">Test Connection</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Included Studies Carousel -->
+        <div class="card mb-4">
+            <div class="card-header"><h2 class="text-xl font-semibold">Included Studies Highlights</h2></div>
+            <div class="p-4">
+                <div class="flex space-x-4 overflow-x-auto pb-4 scroll-container">
+                    <template x-for="study in studies.filter(s => s.status.text === 'Included')" :key="study.id">
+                        <div class="card flex-shrink-0 w-80">
+                            <div class="p-4">
+                                <p class="font-bold text-base truncate" x-text="study.title"></p>
+                                <p class="text-sm text-gray-400 mb-3" x-text="`${study.authors} (${study.year})`"></p>
+                                <div class="text-xs mb-3">
+                                    <p>M1 Conf: <span class="font-semibold text-green-400" x-text="`${study.model1.confidence}%`"></span></p>
+                                    <p>M2 Conf: <span class="font-semibold text-green-400" x-text="`${study.model2.confidence}%`"></span></p>
+                                </div>
+                                <button @click="selectedStudy = study" class="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-semibold shadow">View Details</button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="flex flex-col md:flex-row gap-4">
+            <!-- Left Sidebar -->
+            <aside class="sidebar flex-shrink-0">
+                <div class="card mb-4">
+                    <div class="card-header"><h3 class="text-lg font-semibold">Statistics</h3></div>
+                    <div class="p-4 space-y-2 text-sm">
+                        <p>Total References: <span class="font-bold float-right">1500</span></p>
+                        <p>Processed: <span class="font-bold float-right">750 / 1500 (50%)</span></p>
+                        <p>Included: <span class="font-bold float-right text-green-400">50</span></p>
+                        <p>Excluded: <span class="font-bold float-right text-red-400">680</span></p>
+                        <p>Conflict: <span class="font-bold float-right text-yellow-400">20</span></p>
+                    </div>
+                </div>
+                <div class="card mb-4">
+                     <div class="card-header"><h3 class="text-lg font-semibold">Processing Queue</h3></div>
+                    <div class="p-4">
+                        <div class="flex justify-center items-center h-40 border-2 border-dashed border-gray-600 rounded-md text-gray-500">
+                            <p class="text-center">Drag &amp; drop XML, RIS, SCRN files here or <button class="text-blue-400 hover:underline">browse</button>.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                     <div class="card-header"><h3 class="text-lg font-semibold">Live Logging</h3></div>
+                    <div class="p-2 h-96 overflow-y-auto bg-gray-900 rounded-b-md">
+                        <div class="monospace text-xs space-y-1">
+                            <template x-for="log in logs" :key="log.id">
+                                <p><span class="text-gray-500" x-text="log.time"></span> <span :class="log.color" x-text="log.message"></span></p>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Content: Reference List -->
+            <main class="main-content">
+                <div class="card">
+                    <div class="card-header"><h2 class="text-xl font-semibold">Reference List</h2></div>
+                    <div class="p-4 space-y-3">
+                        <template x-for="study in studies" :key="study.id">
+                           <div class="card" x-data="{ expanded: false }">
+                                <div @click="expanded = !expanded" class="p-3 flex justify-between items-center cursor-pointer hover:bg-gray-700">
+                                    <div>
+                                        <p class="font-bold" x-text="study.title"></p>
+                                        <p class="text-sm text-gray-400" x-text="`${study.authors} (${study.year})`"></p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                         <span class="status-badge" :class="study.status.class" x-text="study.status.text"></span>
+                                         <span x-show="study.agreement === 'Conflict'" class="status-badge status-yellow">Conflict</span>
+                                         <span x-show="study.agreement === 'Agreement'" class="status-badge status-green">Agreement</span>
+                                    </div>
+                                </div>
+                                <div x-show="expanded" x-cloak="" class="p-4 border-t border-gray-600" x-transition="">
+                                    <h4 class="font-semibold mb-2">Abstract</h4>
+                                    <p class="text-sm text-gray-300 mb-4" x-text="study.abstract"></p>
+                                    <h4 class="font-semibold mb-2">PICO-TT Scoring</h4>
+                                    <div class="mb-4">
+                                        <template x-for="score in study.pico" :key="score.label">
+                                            <div class="pico-score">
+                                                <span class="pico-label" x-text="score.label"></span>
+                                                <div class="pico-bar-container">
+                                                    <div class="pico-bar" :style="`width: ${score.value}%; background-color: ${picoColor(score.value)}`" x-text="`${score.value}%`"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <h4 class="font-semibold mb-2">AI Analysis</h4>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                        <div class="bg-gray-800 p-3 rounded">
+                                            <p class="font-bold mb-1">Model 1 (Conservative)</p>
+                                            <p><span class="font-semibold">Decision:</span> <span :class="study.model1.decision === 'Include' ? 'text-green-400' : 'text-red-400'" x-text="study.model1.decision"></span></p>
+                                            <p><span class="font-semibold">Confidence:</span> <span x-text="`${study.model1.confidence}%`"></span></p>
+                                            <p class="mt-2"><span class="font-semibold">Reasoning:</span> <span class="text-gray-400" x-text="study.model1.reasoning"></span></p>
+                                        </div>
+                                        <div class="bg-gray-800 p-3 rounded">
+                                            <p class="font-bold mb-1">Model 2 (Pragmatic)</p>
+                                            <p><span class="font-semibold">Decision:</span> <span :class="study.model2.decision === 'Include' ? 'text-green-400' : 'text-red-400'" x-text="study.model2.decision"></span></p>
+                                            <p><span class="font-semibold">Confidence:</span> <span x-text="`${study.model2.confidence}%`"></span></p>
+                                            <p class="mt-2"><span class="font-semibold">Reasoning:</span> <span class="text-gray-400" x-text="study.model2.reasoning"></span></p>
+                                        </div>
+                                    </div>
+                                     <div class="mt-4 flex justify-end space-x-2">
+                                        <button class="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-sm">Add Note</button>
+                                        <button class="px-3 py-1 bg-yellow-600 hover:bg-yellow-500 rounded text-sm">Flag for Review</button>
+                                        <button class="px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm">Override: Exclude</button>
+                                        <button class="px-3 py-1 bg-green-600 hover:bg-green-500 rounded text-sm">Override: Include</button>
+                                    </div>
+                                </div>
+                           </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Live Data Table -->
+                 <div class="mt-4 card">
+                    <div class="card-header"><h2 class="text-xl font-semibold">Screening Results</h2></div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="bg-gray-700 text-xs uppercase">
+                                <tr>
+                                    <th class="px-4 py-2">Study</th>
+                                    <th class="px-4 py-2">Model 1</th>
+                                    <th class="px-4 py-2">Model 2</th>
+                                    <th class="px-4 py-2">Agreement</th>
+                                    <th class="px-4 py-2">Final Decision</th>
+                                    <th class="px-4 py-2">Timestamp</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-700">
+                                <template x-for="study in studies" :key="study.id">
+                                    <tr class="hover:bg-gray-700">
+                                        <td class="px-4 py-2 font-medium" x-text="study.title"></td>
+                                        <td class="px-4 py-2" :class="study.model1.decision === 'Include' ? 'text-green-400' : 'text-red-400'" x-text="study.model1.decision"></td>
+                                        <td class="px-4 py-2" :class="study.model2.decision === 'Include' ? 'text-green-400' : 'text-red-400'" x-text="study.model2.decision"></td>
+                                        <td class="px-4 py-2">
+                                            <span class="status-badge text-xs" :class="study.agreement === 'Conflict' ? 'status-yellow' : 'status-green'" x-text="study.agreement"></span>
+                                        </td>
+                                        <td class="px-4 py-2">
+                                             <span class="status-badge text-xs" :class="study.status.class" x-text="study.status.text"></span>
+                                        </td>
+                                        <td class="px-4 py-2 text-gray-400 monospace" x-text="new Date().toISOString().substr(11, 8)"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <!-- Details Modal -->
+    <div x-show="selectedStudy" x-cloak="" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50" @click.self="selectedStudy = null" x-transition:enter="ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+        <div x-show="selectedStudy" class="card w-full max-w-4xl max-h-[90vh] overflow-y-auto" x-transition:enter="ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100" x-transition:leave="ease-in duration-200" x-transition:leave-start="opacity-100 scale-100" x-transition:leave-end="opacity-0 scale-95">
+            <template x-if="selectedStudy">
+                <div>
+                    <div class="card-header flex justify-between items-center sticky top-0">
+                        <h3 class="text-lg font-bold" x-text="selectedStudy.title"></h3>
+                        <button @click="selectedStudy = null" class="text-2xl font-bold hover:text-red-400">×</button>
+                    </div>
+                    <div class="p-6">
+                        <h4 class="font-semibold mb-2">Abstract</h4>
+                        <p class="text-sm text-gray-300 mb-4" x-text="selectedStudy.abstract"></p>
+                        <h4 class="font-semibold mb-2">PICO-TT Scoring</h4>
+                        <div class="mb-4">
+                            <template x-for="score in selectedStudy.pico" :key="score.label">
+                                <div class="pico-score">
+                                    <span class="pico-label" x-text="score.label"></span>
+                                    <div class="pico-bar-container">
+                                        <div class="pico-bar" :style="`width: ${score.value}%; background-color: ${picoColor(score.value)}`" x-text="`${score.value}%`"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                        <h4 class="font-semibold mb-2">AI Analysis (JSON Schema Output)</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <div class="bg-gray-800 p-3 rounded">
+                                <p class="font-bold mb-1">Model 1 (Conservative)</p>
+                                <p><span class="font-semibold">Decision:</span> <span :class="selectedStudy.model1.decision === 'Include' ? 'text-green-400' : 'text-red-400'" x-text="selectedStudy.model1.decision"></span></p>
+                                <p><span class="font-semibold">Confidence:</span> <span x-text="`${selectedStudy.model1.confidence}%`"></span></p>
+                                <p class="mt-2"><span class="font-semibold">Reasoning:</span> <span class="text-gray-400" x-text="selectedStudy.model1.reasoning"></span></p>
+                            </div>
+                            <div class="bg-gray-800 p-3 rounded">
+                                <p class="font-bold mb-1">Model 2 (Pragmatic)</p>
+                                <p><span class="font-semibold">Decision:</span> <span :class="selectedStudy.model2.decision === 'Include' ? 'text-green-400' : 'text-red-400'" x-text="selectedStudy.model2.decision"></span></p>
+                                <p><span class="font-semibold">Confidence:</span> <span x-text="`${selectedStudy.model2.confidence}%`"></span></p>
+                                <p class="mt-2"><span class="font-semibold">Reasoning:</span> <span class="text-gray-400" x-text="selectedStudy.model2.reasoning"></span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+
+<script>
+function llmScreeningTool() {
+    return {
+        model1: { status: { text: 'Disconnected', color: 'red' } },
+        model2: { status: { text: 'Disconnected', color: 'red' } },
+        logs: [],
+        logId: 0,
+        selectedStudy: null,
+        studies: [
+            { 
+                id: 1, 
+                title: 'Efficacy and safety of metformin in type 2 diabetes', 
+                authors: 'Johnson A, et al.', 
+                year: 2021,
+                abstract: 'This randomized controlled trial investigates the long-term efficacy and safety of metformin compared to placebo in 500 adults with newly diagnosed type 2 diabetes over a 24-month period. Primary outcomes were changes in HbA1c levels.',
+                status: { text: 'Included', class: 'status-green' },
+                agreement: 'Agreement',
+                pico: [
+                    { label: 'Population', value: 95 },
+                    { label: 'Intervention', value: 98 },
+                    { label: 'Comparison', value: 90 },
+                    { label: 'Outcomes', value: 85 },
+                    { label: 'Time Frame', value: 100 },
+                    { label: 'Study Types', value: 100 },
+                ],
+                model1: { decision: 'Include', confidence: 98, reasoning: 'All PICO criteria are met. RCT design is appropriate.'},
+                model2: { decision: 'Include', confidence: 95, reasoning: 'Strong match with population, intervention, and outcomes.'}
+            },
+            { 
+                id: 2, 
+                title: 'A qualitative study on patient experiences with insulin pumps', 
+                authors: 'Smith B, et al.', 
+                year: 2020,
+                abstract: 'This study explores the lived experiences of 20 patients using insulin pump therapy for type 1 diabetes. Data was collected through semi-structured interviews and analyzed using thematic analysis. The focus was on quality of life.',
+                status: { text: 'Excluded', class: 'status-red' },
+                agreement: 'Agreement',
+                 pico: [
+                    { label: 'Population', value: 40 },
+                    { label: 'Intervention', value: 30 },
+                    { label: 'Comparison', value: 0 },
+                    { label: 'Outcomes', value: 20 },
+                    { label: 'Time Frame', value: 10 },
+                    { label: 'Study Types', value: 0 },
+                ],
+                model1: { decision: 'Exclude', confidence: 100, reasoning: 'Wrong study type (qualitative) and population (Type 1).'},
+                model2: { decision: 'Exclude', confidence: 100, reasoning: 'Does not match study type criteria (not an RCT).'}
+            },
+            { 
+                id: 3, 
+                title: 'Short-term effects of a novel GLP-1 agonist in adults', 
+                authors: 'Chen C, et al.', 
+                year: 2022,
+                abstract: 'This pilot study examines the effects of a new GLP-1 agonist on glycemic control in adults over a 3-month period. While promising, the population includes both pre-diabetic and type 2 diabetic individuals.',
+                status: { text: 'Conflict', class: 'status-yellow' },
+                agreement: 'Conflict',
+                 pico: [
+                    { label: 'Population', value: 70 },
+                    { label: 'Intervention', value: 80 },
+                    { label: 'Comparison', value: 50 },
+                    { label: 'Outcomes', value: 75 },
+                    { label: 'Time Frame', value: 40 },
+                    { label: 'Study Types', value: 60 },
+                ],
+                model1: { decision: 'Exclude', confidence: 85, reasoning: 'Time frame (3 months) is too short. Population is mixed.'},
+                model2: { decision: 'Include', confidence: 75, reasoning: 'Potentially relevant intervention and outcomes. Flag for full-text review despite short time frame.'}
+            },
+        ],
+
+        init() {
+            this.addLog('System initialized. Ready for screening.', 'text-green-400');
+            setInterval(() => {
+                const now = new Date();
+                if (now.getSeconds() % 15 === 0) {
+                     this.addLog('Auto-saving configuration...', 'text-gray-400');
+                }
+            }, 1000);
+        },
+
+        addLog(message, colorClass = 'text-white') {
+            const timestamp = new Date().toISOString().substr(11, 8);
+            this.logs.unshift({ id: this.logId++, time: timestamp, message: message, color: colorClass });
+            if (this.logs.length > 200) {
+                this.logs.pop();
+            }
+        },
+
+        testConnection(model) {
+            const target = this[model];
+            const originalStatus = { ...target.status };
+
+            target.status = { text: 'Testing...', color: 'yellow' };
+            this.addLog(`Testing connection for ${model}...`, 'text-yellow-400');
+
+            setTimeout(() => {
+                if (Math.random() > 0.2) {
+                    target.status = { text: 'Connected', color: 'green' };
+                    this.addLog(`Connection successful for ${model}.`, 'text-green-400');
+                } else {
+                    target.status = { text: 'Connection Failed', color: 'red' };
+                    this.addLog(`Connection failed for ${model}. Check API key and endpoint.`, 'text-red-400');
+                }
+            }, 1500);
+        },
+        
+        picoColor(value) {
+            if (value > 80) return '#48bb78'; // green
+            if (value > 50) return '#ecc94b'; // yellow
+            return '#f56565'; // red
+        }
+    }
+}
+</script>
+
+
+
+</body></html>

@@ -1,0 +1,48 @@
+# Core Flask dependencies
+Flask>=3.0.0,<4.0.0
+Flask-SQLAlchemy>=3.1.0,<4.0.0
+Flask-Migrate>=4.0.0,<5.0.0
+
+# LLM providers
+openai>=1.50.0,<2.0.0
+anthropic>=0.35.0,<1.0.0
+
+# File parsing
+rispy>=0.10.0,<1.0.0
+bibtexparser>=1.4.0,<2.0.0
+lxml>=4.9.0,<5.0.0
+biopython>=1.80,<2.0.0
+
+# Data processing
+pandas>=2.0.0,<3.0.0
+pydantic>=2.5.0,<3.0.0
+
+# Utilities
+python-dotenv>=1.0.0,<2.0.0
+requests>=2.31.0,<3.0.0
+
+# Testing
+pytest>=7.4.0,<8.0.0
+pytest-flask>=1.3.0,<2.0.0
+pytest-cov>=4.1.0,<5.0.0
+
+# Development
+jsonschema>=4.20.0,<5.0.0
+
+# LLM utilities
+tiktoken>=0.5.0,<1.0.0
+
+# Async support
+aiohttp>=3.8.0,<4.0.0
+
+# Desktop GUI (optional)
+PyQt6>=6.5.0,<7.0.0
+
+# Excel export with formatting
+openpyxl>=3.1.0,<4.0.0
+
+# Database drivers
+psycopg2-binary>=2.9.0,<3.0.0
+
+# Production server
+gunicorn>=21.2.0,<24.0.0

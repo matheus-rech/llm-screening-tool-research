@@ -1,0 +1,30 @@
+<?xml version="1.0" ?>
+<!DOCTYPE PubmedArticleSet PUBLIC "-//NLM//DTD PubMedArticle, 1st January 2019//EN" "https://dtd.nlm.nih.gov/ncbi/pubmed/out/pubmed_190101.dtd">
+<PubmedArticleSet>
+<PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+        <PMID Version="1">29162447</PMID>
+        <Article PubModel="Print-Electronic">
+            <Journal>
+                <Title>The Journal of clinical endocrinology and metabolism</Title>
+            </Journal>
+            <ArticleTitle>Effect of Vitamin D Supplementation on Polycystic Ovary Syndrome: A Systematic Review and Meta-Analysis of Randomized Controlled Trials.</ArticleTitle>
+            <Abstract>
+                <AbstractText Label="CONTEXT" NlmCategory="CONTEXT">Vitamin D deficiency is associated with metabolic and endocrine disorders in polycystic ovary syndrome (PCOS). However, the effects of vitamin D supplementation on PCOS remain controversial.</AbstractText>
+            </Abstract>
+            <AuthorList CompleteYN="Y">
+                <Author ValidYN="Y">
+                    <LastName>Miao</LastName>
+                    <ForeName>Chun-Yan</ForeName>
+                    <Initials>CY</Initials>
+                </Author>
+                 <Author ValidYN="Y">
+                    <LastName>Fang</LastName>
+                    <ForeName>Xin-Qi</ForeName>
+                    <Initials>XQ</Initials>
+                </Author>
+            </AuthorList>
+        </Article>
+    </MedlineCitation>
+</PubmedArticle>
+</PubmedArticleSet> 

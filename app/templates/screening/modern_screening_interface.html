@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Production LLM Screening - {{ project.name }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            color: #E0E0E0;
+            background-color: #1a202c;
+        }
+        .header {
+            background-color: #2c3e50;
+        }
+        .sidebar {
+            width: 280px;
+            min-width: 280px;
+        }
+        .main-content {
+            flex-grow: 1;
+        }
+        .monospace {
+            font-family: 'Roboto Mono', monospace;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25em 0.6em;
+            font-size: 0.75rem;
+            font-weight: 600;
+            border-radius: 9999px;
+        }
+        .status-green {
+            background-color: #38a169;
+            color: white;
+        }
+        .status-red {
+            background-color: #e53e3e;
+            color: white;
+        }
+        .status-yellow {
+            background-color: #d69e2e;
+            color: white;
+        }
+        .card {
+            background-color: #2d3748;
+            border: 1px solid #4a5568;
+            border-radius: 0.5rem;
+        }
+        .card-header {
+            background-color: #4a5568;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #2d3748;
+            cursor: pointer;
+        }
+        .pico-score {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .pico-label {
+            width: 100px;
+            font-weight: 600;
+        }
+        .pico-bar-container {
+            flex-grow: 1;
+            background-color: #4a5568;
+            border-radius: 0.25rem;
+            overflow: hidden;
+            height: 20px;
+        }
+        .pico-bar {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: white;
+            font-weight: bold;
+        }
+        .scroll-container::-webkit-scrollbar {
+            height: 8px;
+        }
+        .scroll-container::-webkit-scrollbar-track {
+            background: #2d3748;
+        }
+        .scroll-container::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+        .scroll-container::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+        [x-cloak] { display: none; }
+    </style>
+</head>
+<body x-data="modernScreeningInterface()">
+    
+    <!-- Header -->
+    <header class="header text-white p-4 shadow-md">
+        <div class="container mx-auto">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-2xl font-bold">{{ project.name or 'Production LLM Screening' }}</h1>
+                    <p class="text-sm opacity-80">Dual-Provider AI Screening with Real-time Analysis</p>
+                </div>
+                
+                <!-- Progress Indicators -->
+                <div class="flex items-center space-x-6">
+                    <!-- Provider Status -->
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center space-x-1">
+                            <div class="w-2 h-2 bg-green-500 rounded-full" x-show="providerStatus.openai"></div>
+                            <div class="w-2 h-2 bg-red-500 rounded-full" x-show="!providerStatus.openai"></div>
+                            <span class="text-xs text-gray-300">OpenAI</span>
+                            <span class="text-xs text-gray-400" x-text="`T:${modelConfig.openaiTemperature || '0.1'}`"></span>
+                            <span class="text-xs text-gray-400" x-show="modelConfig.openaiSeed" x-text="`S:${modelConfig.openaiSeed}`"></span>
+                        </div>
+                        <div class="flex items-center space-x-1">
+                            <div class="w-2 h-2 bg-green-500 rounded-full" x-show="providerStatus.anthropic"></div>
+                            <div class="w-2 h-2 bg-red-500 rounded-full" x-show="!providerStatus.anthropic"></div>
+                            <span class="text-xs text-gray-300">Anthropic</span>
+                            <span class="text-xs text-gray-400" x-text="`T:${modelConfig.anthropicTemperature || '0.1'}`"></span>
+                            <span class="text-xs text-gray-400" x-show="modelConfig.anthropicSeed" x-text="`S:${modelConfig.anthropicSeed}`"></span>
+                        </div>
+                    </div>
+                    
+                    <!-- Model Configuration Controls -->
+                    <div class="flex items-center space-x-4 text-xs">
+                        <div class="flex items-center space-x-2">
+                            <label class="text-gray-300">OpenAI Temp:</label>
+                            <input type="range" x-model="modelConfig.openaiTemperature" min="0" max="2" step="0.1" 
+                                   class="w-16 h-1" @input="updateModelConfig()">
+                            <span class="text-gray-400 w-8" x-text="modelConfig.openaiTemperature"></span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-gray-300">Seed:</label>
+                            <input type="number" x-model="modelConfig.openaiSeed" 
+                                   class="w-16 px-1 py-0 text-xs border border-gray-600 rounded bg-gray-800 text-white" 
+                                   @input="updateModelConfig()" placeholder="None">
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-gray-300">Anthropic Temp:</label>
+                            <input type="range" x-model="modelConfig.anthropicTemperature" min="0" max="2" step="0.1" 
+                                   class="w-16 h-1" @input="updateModelConfig()">
+                            <span class="text-gray-400 w-8" x-text="modelConfig.anthropicTemperature"></span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-gray-300">Seed:</label>
+                            <input type="number" x-model="modelConfig.anthropicSeed" 
+                                   class="w-16 px-1 py-0 text-xs border border-gray-600 rounded bg-gray-800 text-white" 
+                                   @input="updateModelConfig()" placeholder="None">
+                        </div>
+                    </div>
+                    
+                    <!-- Progress Info -->
+                    <div class="text-right">
+                        <p class="text-sm font-medium" 
+                           x-text="progress.processed + ' / ' + progress.total"></p>
+                        <p class="text-xs opacity-80">Articles screened</p>
+                    </div>
+                    
+                    <!-- Cost Indicator -->
+                    <div class="text-right">
+                        <p class="text-sm font-medium" x-text="'$' + currentCost.toFixed(2)"></p>
+                        <p class="text-xs opacity-80">Current cost</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container mx-auto p-4">
+        
+        <!-- Main Content Area -->
+        <div class="flex flex-col md:flex-row gap-4">
+            <!-- Left Sidebar -->
+            <aside class="sidebar flex-shrink-0">
+                <div class="card mb-4">
+                    <div class="card-header"><h3 class="text-lg font-semibold">Statistics</h3></div>
+                    <div class="p-4 space-y-2 text-sm">
+                        <p>Total References: <span class="font-bold float-right" x-text="progress.total"></span></p>
+                        <p>Processed: <span class="font-bold float-right" x-text="progress.processed + ' / ' + progress.total + ' (' + Math.round((progress.processed / progress.total) * 100) + '%)'"></span></p>
+                        <p>Included: <span class="font-bold float-right text-green-400" x-text="stats.included"></span></p>
+                        <p>Excluded: <span class="font-bold float-right text-red-400" x-text="stats.excluded"></span></p>
+                        <p>Uncertain: <span class="font-bold float-right text-yellow-400" x-text="stats.uncertain"></span></p>
+                        <p>Conflicts: <span class="font-bold float-right text-yellow-400" x-text="stats.conflicts"></span></p>
+                    </div>
+                </div>
+                
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-semibold">Article Queue</h3>
+                            <button @click="refreshQueue()" class="text-blue-400 hover:text-blue-300">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="p-4">
+                        <!-- Queue Strategy Selector -->
+                        <select x-model="queueStrategy" @change="refreshQueue()" 
+                                class="w-full mb-4 px-3 py-2 text-sm bg-gray-700 border border-gray-600 rounded-md text-white">
+                            <option value="ai_priority">AI Priority Queue</option>
+                            <option value="high_confidence">High Confidence</option>
+                            <option value="low_confidence">Low Confidence</option>
+                            <option value="conflicts">Conflicts Only</option>
+                            <option value="random">Random Order</option>
+                        </select>
+                        
+                        <!-- Article List -->
+                        <div class="space-y-2 max-h-64 overflow-y-auto">
+                            <template x-for="(article, index) in articleQueue" :key="article.id">
+                                <div class="card cursor-pointer hover:bg-gray-600 transition-colors"
+                                     :class="currentArticle?.id === article.id ? 'ring-2 ring-blue-500' : ''"
+                                     @click="selectArticle(article)">
+                                    <div class="p-3">
+                                        <h4 class="text-sm font-medium line-clamp-2 mb-2" 
+                                            x-text="article.title"></h4>
+                                        
+                                        <!-- AI Predictions -->
+                                        <div class="flex justify-between items-center text-xs">
+                                            <div class="flex space-x-1">
+                                                <span class="status-badge text-xs" 
+                                                      :class="article.openai_prediction === 'INCLUDE' ? 'status-green' : 
+                                                              article.openai_prediction === 'EXCLUDE' ? 'status-red' : 
+                                                              'status-yellow'"
+                                                      x-text="'O: ' + (article.openai_prediction || 'N/A')"></span>
+                                                <span class="status-badge text-xs" 
+                                                      :class="article.anthropic_prediction === 'INCLUDE' ? 'status-green' : 
+                                                              article.anthropic_prediction === 'EXCLUDE' ? 'status-red' : 
+                                                              'status-yellow'"
+                                                      x-text="'A: ' + (article.anthropic_prediction || 'N/A')"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header"><h3 class="text-lg font-semibold">Live Logging</h3></div>
+                    <div class="p-2 h-64 overflow-y-auto bg-gray-900 rounded-b-md">
+                        <div class="monospace text-xs space-y-1">
+                            <template x-for="log in logs" :key="log.id">
+                                <p><span class="text-gray-500" x-text="log.time"></span> <span :class="log.color" x-text="log.message"></span></p>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Content: Reference List -->
+            <main class="main-content">
+                <div class="card" x-show="currentArticle">
+                    
+                    <!-- Article Header -->
+                    <div class="card-header">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h2 class="text-xl font-semibold" x-text="currentArticle?.title"></h2>
+                                <div class="flex flex-wrap gap-4 text-sm text-gray-300 mt-2">
+                                    <span x-show="currentArticle?.authors" x-text="currentArticle?.authors"></span>
+                                    <span x-show="currentArticle?.year" x-text="currentArticle?.year"></span>
+                                    <span x-show="currentArticle?.journal" x-text="currentArticle?.journal"></span>
+                                </div>
+                            </div>
+                            <div class="flex space-x-2">
+                                <button @click="flagArticle()" 
+                                        class="px-3 py-1 text-sm bg-yellow-600 hover:bg-yellow-700 rounded text-white">
+                                    Flag for Review
+                                </button>
+                                <button @click="skipArticle()" 
+                                        class="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-500 rounded text-white">
+                                    Skip
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Abstract - Enhanced Display -->
+                    <div class="p-6 border-b border-gray-600">
+                        <h3 class="text-lg font-bold mb-4 text-blue-400">Abstract</h3>
+                        <div class="bg-gray-800 p-4 rounded-lg border-l-4 border-blue-500">
+                            <p class="text-base text-gray-100 leading-relaxed" x-text="currentArticle?.abstract"></p>
+                        </div>
+                    </div>
+
+                    <!-- PICO-TT Scoring - Collapsible -->
+                    <div class="p-4 border-b border-gray-600" x-show="currentArticle?.ai_analysis">
+                        <details class="mb-4">
+                            <summary class="cursor-pointer text-sm font-semibold text-gray-400 hover:text-gray-300 mb-2">PICO-TT Extraction Details</summary>
+                            <div class="mt-3">
+                                <template x-for="score in getPicoScores(currentArticle)" :key="score.label">
+                                    <div class="pico-score">
+                                        <span class="pico-label" x-text="score.label"></span>
+                                        <div class="pico-bar-container">
+                                            <div class="pico-bar" :style="`width: ${score.value}%; background-color: ${picoColor(score.value)}`" x-text="`${score.value}%`"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- AI Analysis Results - Enhanced Display -->
+                    <div class="p-6 border-b border-gray-600" x-show="currentArticle?.ai_analysis">
+                        <h3 class="text-lg font-bold mb-4 text-green-400">AI Classification Results</h3>
+                        
+                        <!-- Provider Comparison -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <!-- OpenAI Analysis -->
+                            <div class="bg-gray-800 p-3 rounded">
+                                <div class="flex items-center justify-between mb-3">
+                                    <p class="font-bold mb-1">Model 1 (Conservative)</p>
+                                    <span class="status-badge text-xs"
+                                          :class="currentArticle?.ai_analysis?.openai?.screening_decision?.final_decision === 'INCLUDE' ? 'status-green' : 
+                                                  currentArticle?.ai_analysis?.openai?.screening_decision?.final_decision === 'EXCLUDE' ? 'status-red' : 
+                                                  'status-yellow'"
+                                          x-text="currentArticle?.ai_analysis?.openai?.screening_decision?.final_decision || 'N/A'"></span>
+                                </div>
+                                
+                                <div class="space-y-2">
+                                    <p><span class="font-semibold">Decision:</span> <span :class="currentArticle?.ai_analysis?.openai?.screening_decision?.final_decision === 'INCLUDE' ? 'text-green-400' : 'text-red-400'" x-text="currentArticle?.ai_analysis?.openai?.screening_decision?.final_decision"></span></p>
+                                    <p><span class="font-semibold">Confidence:</span> <span x-text="Math.round((currentArticle?.ai_analysis?.openai?.screening_decision?.confidence_score || 0) * 100) + '%'"></span></p>
+                                    <p class="mt-2"><span class="font-semibold">Reasoning:</span> <span class="text-gray-400" x-text="currentArticle?.ai_analysis?.openai?.screening_decision?.primary_reason"></span></p>
+                                </div>
+                            </div>
+
+                            <!-- Anthropic Analysis -->
+                            <div class="bg-gray-800 p-3 rounded">
+                                <div class="flex items-center justify-between mb-3">
+                                    <p class="font-bold mb-1">Model 2 (Pragmatic)</p>
+                                    <span class="status-badge text-xs"
+                                          :class="currentArticle?.ai_analysis?.anthropic?.screening_decision?.final_decision === 'INCLUDE' ? 'status-green' : 
+                                                  currentArticle?.ai_analysis?.anthropic?.screening_decision?.final_decision === 'EXCLUDE' ? 'status-red' : 
+                                                  'status-yellow'"
+                                          x-text="currentArticle?.ai_analysis?.anthropic?.screening_decision?.final_decision || 'N/A'"></span>
+                                </div>
+                                
+                                <div class="space-y-2">
+                                    <p><span class="font-semibold">Decision:</span> <span :class="currentArticle?.ai_analysis?.anthropic?.screening_decision?.final_decision === 'INCLUDE' ? 'text-green-400' : 'text-red-400'" x-text="currentArticle?.ai_analysis?.anthropic?.screening_decision?.final_decision"></span></p>
+                                    <p><span class="font-semibold">Confidence:</span> <span x-text="Math.round((currentArticle?.ai_analysis?.anthropic?.screening_decision?.confidence_score || 0) * 100) + '%'"></span></p>
+                                    <p class="mt-2"><span class="font-semibold">Reasoning:</span> <span class="text-gray-400" x-text="currentArticle?.ai_analysis?.anthropic?.screening_decision?.primary_reason"></span></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Agreement Analysis -->
+                        <div class="bg-gray-50 rounded-lg p-4 mb-4" x-show="currentArticle?.agreement_analysis">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-semibold text-gray-900">Provider Agreement</h4>
+                                <span class="px-2 py-1 text-xs rounded-full"
+                                      :class="currentArticle?.agreement_analysis?.agreement ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'"
+                                      x-text="currentArticle?.agreement_analysis?.agreement ? 'AGREE' : 'DISAGREE'"></span>
+                            </div>
+                            <div class="grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                    <span class="font-medium">Decision:</span>
+                                    <span x-text="currentArticle?.agreement_analysis?.decision_agreement ? 'Match' : 'Differ'"></span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Confidence Δ:</span>
+                                    <span x-text="Math.round((currentArticle?.agreement_analysis?.confidence_difference || 0) * 100) + '%'"></span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">Review Required:</span>
+                                    <span x-text="currentArticle?.agreement_analysis?.requires_human_review ? 'Yes' : 'No'"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- PICOTT Extraction -->
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <h5 class="font-medium text-gray-900 mb-2">Extracted PICOTT (OpenAI)</h5>
+                                <div class="space-y-1 text-gray-600">
+                                    <div><strong>P:</strong> <span x-text="currentArticle?.ai_analysis?.openai?.picott_extraction?.population || 'Not identified'"></span></div>
+                                    <div><strong>I:</strong> <span x-text="currentArticle?.ai_analysis?.openai?.picott_extraction?.intervention || 'Not identified'"></span></div>
+                                    <div><strong>C:</strong> <span x-text="currentArticle?.ai_analysis?.openai?.picott_extraction?.comparison || 'Not identified'"></span></div>
+                                    <div><strong>O:</strong> <span x-text="(currentArticle?.ai_analysis?.openai?.picott_extraction?.outcomes || []).join(', ') || 'Not identified'"></span></div>
+                                </div>
+                            </div>
+                            <div>
+                                <h5 class="font-medium text-gray-900 mb-2">Extracted PICOTT (Anthropic)</h5>
+                                <div class="space-y-1 text-gray-600">
+                                    <div><strong>P:</strong> <span x-text="currentArticle?.ai_analysis?.anthropic?.picott_extraction?.population || 'Not identified'"></span></div>
+                                    <div><strong>I:</strong> <span x-text="currentArticle?.ai_analysis?.anthropic?.picott_extraction?.intervention || 'Not identified'"></span></div>
+                                    <div><strong>C:</strong> <span x-text="currentArticle?.ai_analysis?.anthropic?.picott_extraction?.comparison || 'Not identified'"></span></div>
+                                    <div><strong>O:</strong> <span x-text="(currentArticle?.ai_analysis?.anthropic?.picott_extraction?.outcomes || []).join(', ') || 'Not identified'"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Abstract -->
+                    <div class="border-b border-gray-200 p-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Abstract</h3>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <p class="text-gray-800 leading-relaxed" x-text="currentArticle?.abstract"></p>
+                        </div>
+                    </div>
+
+                    <!-- Human Decision Panel -->
+                    <div class="p-4">
+                        <div class="mt-4 flex justify-end space-x-2">
+                            <button @click="makeDecision('NOTE')" class="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-sm">Add Note</button>
+                            <button @click="flagArticle()" class="px-3 py-1 bg-yellow-600 hover:bg-yellow-500 rounded text-sm">Flag for Review</button>
+                            <button @click="makeDecision('EXCLUDE')" class="px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm">Override: Exclude</button>
+                            <button @click="makeDecision('INCLUDE')" class="px-3 py-1 bg-green-600 hover:bg-green-500 rounded text-sm">Override: Include</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- No Article Selected -->
+                <div class="card p-12 text-center" x-show="!currentArticle">
+                    <h3 class="text-lg font-medium mb-2">No Article Selected</h3>
+                    <p class="text-gray-400 mb-6">Select an article from the queue to begin screening</p>
+                    <button @click="loadNextBatch()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-medium">
+                        Load Articles
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Help -->
+    <div class="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 p-4" x-show="showKeyboardHelp">
+        <h4 class="font-semibold text-gray-900 mb-2">Keyboard Shortcuts</h4>
+        <div class="space-y-1 text-sm text-gray-600">
+            <div><kbd class="bg-gray-100 px-2 py-1 rounded">I</kbd> Include</div>
+            <div><kbd class="bg-gray-100 px-2 py-1 rounded">E</kbd> Exclude</div>
+            <div><kbd class="bg-gray-100 px-2 py-1 rounded">U</kbd> Uncertain</div>
+            <div><kbd class="bg-gray-100 px-2 py-1 rounded">A</kbd> Agree with AI</div>
+            <div><kbd class="bg-gray-100 px-2 py-1 rounded">Space</kbd> Next article</div>
+            <div><kbd class="bg-gray-100 px-2 py-1 rounded">?</kbd> Toggle help</div>
+        </div>
+    </div>
+
+    <script>
+        function modernScreeningInterface() {
+            return {
+                // Current state
+                currentArticle: null,
+                humanDecision: null,
+                humanReasoning: '',
+                sendToExpert: false,
+                addToTraining: false,
+                
+                // Queue management
+                articleQueue: [],
+                queueStrategy: 'ai_priority',
+                
+                // Progress tracking
+                progress: {
+                    total: 0,
+                    processed: 0
+                },
+                
+                // Statistics
+                stats: {
+                    included: 0,
+                    excluded: 0,
+                    uncertain: 0,
+                    conflicts: 0,
+                    agreement: 0.0
+                },
+                
+                // System status
+                providerStatus: {
+                    openai: true,
+                    anthropic: true
+                },
+                currentCost: 0.0,
+                showKeyboardHelp: false,
+                
+                // Model configuration
+                modelConfig: {
+                    openaiTemperature: 0.1,
+                    openaiSeed: null,
+                    anthropicTemperature: 0.1,
+                    anthropicSeed: null
+                },
+                
+                // Logging system
+                logs: [],
+                logId: 0,
+                
+                // Initialization
+                init() {
+                    this.addLog('System initialized. Ready for screening.', 'text-green-400');
+                    this.loadModelConfig();
+                    this.loadArticleQueue();
+                    this.setupKeyboardShortcuts();
+                    this.startProgressTracking();
+                    
+                    // Auto-save interval like in reference
+                    setInterval(() => {
+                        const now = new Date();
+                        if (now.getSeconds() % 15 === 0) {
+                            this.addLog('Auto-saving configuration...', 'text-gray-400');
+                        }
+                    }, 1000);
+                },
+                
+                // Load model configuration
+                async loadModelConfig() {
+                    try {
+                        const response = await fetch('/api/model-config/project/{{ project.id }}');
+                        const data = await response.json();
+                        if (data.success && data.config) {
+                            this.modelConfig = {
+                                openaiTemperature: data.config.temperature || 0.1,
+                                openaiSeed: data.config.seed,
+                                anthropicTemperature: data.config.temperature || 0.1,
+                                anthropicSeed: data.config.seed
+                            };
+                            this.addLog('Model configuration loaded successfully.', 'text-green-400');
+                        }
+                    } catch (error) {
+                        console.error('Failed to load model configuration:', error);
+                        this.addLog('Failed to load model configuration', 'text-red-400');
+                    }
+                },
+                
+                // Update model configuration
+                async updateModelConfig() {
+                    try {
+                        const response = await fetch(`/api/model-config/project/{{ project.id }}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.modelConfig)
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            this.addLog('Model configuration updated', 'text-green-400');
+                        } else {
+                            this.addLog('Failed to update model configuration', 'text-red-400');
+                        }
+                    } catch (error) {
+                        console.error('Error updating model configuration:', error);
+                        this.addLog('Error updating model configuration', 'text-red-400');
+                    }
+                },
+                
+                // Queue management
+                async loadArticleQueue() {
+                    try {
+                        const response = await fetch(`/api/screening/queue?strategy=${this.queueStrategy}&project_id={{ project.id }}`);
+                        const data = await response.json();
+                        this.articleQueue = data.articles || [];
+                        
+                        if (this.articleQueue.length > 0 && !this.currentArticle) {
+                            this.selectArticle(this.articleQueue[0]);
+                        }
+                    } catch (error) {
+                        console.error('Failed to load article queue:', error);
+                    }
+                },
+                
+                selectArticle(article) {
+                    this.currentArticle = article;
+                    this.humanDecision = null;
+                    this.humanReasoning = '';
+                    this.sendToExpert = false;
+                    this.addToTraining = false;
+                    
+                    // Load AI analysis if not already loaded
+                    if (!article.ai_analysis) {
+                        this.loadAIAnalysis(article.id);
+                    }
+                    
+                    // Check for errors in article status
+                    if (article.status === 'failed') {
+                        this.addLog(`Article ${article.id} has failed status`, 'text-red-400');
+                    }
+                },
+                
+                async loadAIAnalysis(articleId) {
+                    try {
+                        this.addLog(`Loading AI analysis for article ${articleId}...`, 'text-blue-400');
+                        
+                        const response = await fetch(`/api/screening/analysis/${articleId}`, {
+                            method: 'GET',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            // Add timeout for frontend requests
+                            signal: AbortSignal.timeout(30000)  // 30 second timeout
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            if (this.currentArticle && this.currentArticle.id === articleId) {
+                                this.currentArticle.ai_analysis = data.analysis;
+                                this.currentArticle.agreement_analysis = data.agreement;
+                                this.addLog(`AI analysis loaded for article ${articleId}`, 'text-green-400');
+                            }
+                        } else {
+                            this.addLog(`AI analysis not available: ${data.message}`, 'text-yellow-400');
+                            // Trigger AI analysis if not available
+                            this.triggerAIAnalysis(articleId);
+                        }
+                    } catch (error) {
+                        console.error('Failed to load AI analysis:', error);
+                        
+                        if (error.name === 'AbortError') {
+                            this.addLog(`Request timeout loading analysis for article ${articleId}`, 'text-red-400');
+                        } else {
+                            this.addLog(`Failed to load AI analysis: ${error.message}`, 'text-red-400');
+                        }
+                        
+                        // Try to trigger analysis if it failed to load
+                        this.triggerAIAnalysis(articleId);
+                    }
+                },
+                
+                async triggerAIAnalysis(articleId) {
+                    try {
+                        this.addLog(`Triggering AI analysis for article ${articleId}...`, 'text-yellow-400');
+                        
+                        const response = await fetch(`/api/screening/process/${articleId}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            signal: AbortSignal.timeout(180000)  // 3 minute timeout for processing
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        if (data.success && this.currentArticle && this.currentArticle.id === articleId) {
+                            this.currentArticle.ai_analysis = data.results;
+                            this.addLog(`AI analysis completed for article ${articleId}`, 'text-green-400');
+                        } else {
+                            this.addLog(`AI analysis failed: ${data.error || 'Unknown error'}`, 'text-red-400');
+                        }
+                    } catch (error) {
+                        console.error('Failed to trigger AI analysis:', error);
+                        
+                        if (error.name === 'AbortError') {
+                            this.addLog(`AI analysis timeout for article ${articleId} (3 min limit)`, 'text-red-400');
+                        } else {
+                            this.addLog(`AI analysis error: ${error.message}`, 'text-red-400');
+                        }
+                    }
+                },
+                
+                // Decision making
+                makeDecision(decision) {
+                    this.humanDecision = decision;
+                },
+                
+                agreeWithAI() {
+                    if (this.currentArticle?.agreement_analysis?.agreement) {
+                        // Both AIs agree - use their decision
+                        const aiDecision = this.currentArticle.ai_analysis?.openai?.screening_decision?.final_decision;
+                        this.humanDecision = aiDecision;
+                        this.humanReasoning = 'Agreed with AI consensus';
+                    } else {
+                        // AIs disagree - mark as uncertain
+                        this.humanDecision = 'UNCERTAIN';
+                        this.humanReasoning = 'AI providers disagree - needs human judgment';
+                    }
+                },
+                
+                async saveAndNext() {
+                    if (!this.humanDecision || !this.currentArticle) return;
+                    
+                    try {
+                        const response = await fetch('/api/screening/decision', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                article_id: this.currentArticle.id,
+                                decision: this.humanDecision,
+                                reasoning: this.humanReasoning,
+                                send_to_expert: this.sendToExpert,
+                                add_to_training: this.addToTraining
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            this.addLog(`Decision saved: ${this.humanDecision} for "${this.currentArticle.title.substring(0, 50)}..."`, 'text-green-400');
+                            this.updateStats();
+                            this.nextArticle();
+                        } else {
+                            this.addLog(`Failed to save decision: ${data.message}`, 'text-red-400');
+                        }
+                    } catch (error) {
+                        console.error('Failed to save decision:', error);
+                        this.addLog('Error saving decision', 'text-red-400');
+                    }
+                },
+                
+                nextArticle() {
+                    const currentIndex = this.articleQueue.findIndex(a => a.id === this.currentArticle?.id);
+                    if (currentIndex < this.articleQueue.length - 1) {
+                        this.selectArticle(this.articleQueue[currentIndex + 1]);
+                    } else {
+                        this.loadNextBatch();
+                    }
+                },
+                
+                async loadNextBatch() {
+                    await this.loadArticleQueue();
+                },
+                
+                // Utility functions
+                updateStats() {
+                    if (this.humanDecision === 'INCLUDE') {
+                        this.stats.included++;
+                    } else if (this.humanDecision === 'EXCLUDE') {
+                        this.stats.excluded++;
+                    } else {
+                        this.stats.uncertain++;
+                    }
+                    this.progress.processed++;
+                },
+                
+                async refreshQueue() {
+                    await this.loadArticleQueue();
+                },
+                
+                flagArticle() {
+                    // Flag article for later review
+                    console.log('Flagging article:', this.currentArticle?.id);
+                },
+                
+                skipArticle() {
+                    this.nextArticle();
+                },
+                
+                setupKeyboardShortcuts() {
+                    document.addEventListener('keydown', (e) => {
+                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                        
+                        switch(e.key.toLowerCase()) {
+                            case 'i':
+                                this.makeDecision('INCLUDE');
+                                break;
+                            case 'e':
+                                this.makeDecision('EXCLUDE');
+                                break;
+                            case 'u':
+                                this.makeDecision('UNCERTAIN');
+                                break;
+                            case 'a':
+                                this.agreeWithAI();
+                                break;
+                            case ' ':
+                                e.preventDefault();
+                                if (this.humanDecision) {
+                                    this.saveAndNext();
+                                } else {
+                                    this.nextArticle();
+                                }
+                                break;
+                            case '?':
+                                this.showKeyboardHelp = !this.showKeyboardHelp;
+                                break;
+                        }
+                    });
+                },
+                
+                async startProgressTracking() {
+                    // Update progress and cost periodically
+                    setInterval(async () => {
+                        try {
+                            const response = await fetch('/api/screening/progress?project_id={{ project.id }}');
+                            const data = await response.json();
+                            if (data.success) {
+                                this.progress = data.progress;
+                                this.currentCost = data.cost;
+                                this.providerStatus = data.provider_status;
+                                
+                                // Update stats
+                                this.stats.included = data.progress.included;
+                                this.stats.excluded = data.progress.excluded;
+                                this.stats.uncertain = data.progress.uncertain;
+                                this.stats.conflicts = data.progress.conflicts;
+                            }
+                        } catch (error) {
+                            console.error('Failed to update progress:', error);
+                        }
+                    }, 5000);
+                },
+                
+                // Logging system (from reference)
+                addLog(message, colorClass = 'text-white') {
+                    const timestamp = new Date().toISOString().substr(11, 8);
+                    this.logs.unshift({ id: this.logId++, time: timestamp, message: message, color: colorClass });
+                    if (this.logs.length > 200) {
+                        this.logs.pop();
+                    }
+                },
+                
+                // PICO scoring functions (from reference)
+                getPicoScores(article) {
+                    if (!article || !article.ai_analysis) {
+                        return [
+                            { label: 'Population', value: 0 },
+                            { label: 'Intervention', value: 0 },
+                            { label: 'Comparison', value: 0 },
+                            { label: 'Outcomes', value: 0 },
+                            { label: 'Time Frame', value: 0 },
+                            { label: 'Study Types', value: 0 }
+                        ];
+                    }
+                    
+                    // Calculate scores based on PICOTT extraction completeness
+                    const openaiPicott = article.ai_analysis.openai?.picott_extraction;
+                    const anthropicPicott = article.ai_analysis.anthropic?.picott_extraction;
+                    
+                    return [
+                        { 
+                            label: 'Population', 
+                            value: this.calculatePicoScore(openaiPicott?.population, anthropicPicott?.population) 
+                        },
+                        { 
+                            label: 'Intervention', 
+                            value: this.calculatePicoScore(openaiPicott?.intervention, anthropicPicott?.intervention) 
+                        },
+                        { 
+                            label: 'Comparison', 
+                            value: this.calculatePicoScore(openaiPicott?.comparison, anthropicPicott?.comparison) 
+                        },
+                        { 
+                            label: 'Outcomes', 
+                            value: this.calculatePicoScore(openaiPicott?.outcomes, anthropicPicott?.outcomes) 
+                        },
+                        { 
+                            label: 'Time Frame', 
+                            value: this.calculatePicoScore(openaiPicott?.time_frame, anthropicPicott?.time_frame) 
+                        },
+                        { 
+                            label: 'Study Types', 
+                            value: this.calculatePicoScore(openaiPicott?.study_types, anthropicPicott?.study_types) 
+                        }
+                    ];
+                },
+                
+                calculatePicoScore(openaiValue, anthropicValue) {
+                    let score = 0;
+                    
+                    // Score based on presence and quality of extracted information
+                    if (openaiValue && openaiValue.trim() && openaiValue.trim() !== 'Not identified') {
+                        score += 50;
+                    }
+                    if (anthropicValue && anthropicValue.trim() && anthropicValue.trim() !== 'Not identified') {
+                        score += 50;
+                    }
+                    
+                    return Math.min(score, 100);
+                },
+                
+                picoColor(value) {
+                    if (value > 80) return '#48bb78'; // green
+                    if (value > 50) return '#ecc94b'; // yellow
+                    return '#f56565'; // red
+                }
+            }
+        }
+    </script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        
+        kbd {
+            font-family: monospace;
+            font-size: 0.875rem;
+        }
+    </style>
+</body>
+</html>

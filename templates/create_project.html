@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create New Screening Project</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-8">
+        <header class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-900">Create a New Project</h1>
+            <p class="text-lg text-gray-600">Start a new systematic review screening by providing the details below.</p>
+        </header>
+
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <form id="create-project-form">
+                <!-- Project Details -->
+                <div class="mb-6">
+                    <h3 class="text-xl font-semibold mb-4 border-b pb-2">Project Details</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="research_question" class="block text-sm font-medium text-gray-700">Research Question (Project Name)</label>
+                            <input type="text" id="research_question" name="research_question" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <div>
+                            <label for="references_file" class="block text-sm font-medium text-gray-700">References File (.ris, .csv, .bib, etc.)</label>
+                            <input type="file" id="references_file" name="references_file" required class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PICO Criteria -->
+                <div class="mb-6">
+                    <h3 class="text-xl font-semibold mb-4 border-b pb-2">PICO Criteria</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div>
+                            <label for="pico_population" class="block text-sm font-medium text-gray-700">Population</label>
+                            <input type="text" id="pico_population" name="pico_population" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                        </div>
+                        <div>
+                            <label for="pico_intervention" class="block text-sm font-medium text-gray-700">Intervention</label>
+                            <input type="text" id="pico_intervention" name="pico_intervention" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                        </div>
+                        <div>
+                            <label for="pico_comparison" class="block text-sm font-medium text-gray-700">Comparison</label>
+                            <input type="text" id="pico_comparison" name="pico_comparison" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                        </div>
+                        <div>
+                            <label for="pico_outcome" class="block text-sm font-medium text-gray-700">Outcome</label>
+                            <input type="text" id="pico_outcome" name="pico_outcome" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API Keys -->
+                <div class="mb-6">
+                    <h3 class="text-xl font-semibold mb-4 border-b pb-2">API Configuration</h3>
+                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="openai_api_key" class="block text-sm font-medium text-gray-700">OpenAI API Key</label>
+                            <input type="password" id="openai_api_key" name="openai_api_key" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                        </div>
+                        <div>
+                            <label for="entrez_email" class="block text-sm font-medium text-gray-700">Entrez Email (for PubMed)</label>
+                            <input type="email" id="entrez_email" name="entrez_email" placeholder="you@example.com" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-4">
+                    <a href="/" class="px-6 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</a>
+                    <button type="submit" class="px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">Create Project</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+        document.getElementById('create-project-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            
+            const config = {
+                research_question: formData.get('research_question'),
+                pico: {
+                    population: formData.get('pico_population'),
+                    intervention: formData.get('pico_intervention'),
+                    comparison: formData.get('pico_comparison'),
+                    outcome: formData.get('pico_outcome')
+                },
+                api_key: formData.get('openai_api_key'),
+                entrez_email: formData.get('entrez_email'),
+            };
+
+            const payload = new FormData();
+            payload.append('file', formData.get('references_file'));
+            payload.append('config', JSON.stringify(config));
+
+            const submitButton = e.target.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Creating...';
+
+            fetch('/create_project', {
+                method: 'POST',
+                body: payload
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.project_id) {
+                    alert('Project created successfully! You will be redirected.');
+                    window.location.href = `/project/${data.project_id}`;
+                } else {
+                    alert(`Error: ${data.error || 'Could not create project.'}`);
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Create Project';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An unexpected error occurred.');
+                submitButton.disabled = false;
+                submitButton.textContent = 'Create Project';
+            });
+        });
+    </script>
+</body>
+</html> 
